@@ -8,7 +8,10 @@ type SearchResult = {
   type: string;
   exchange: string;
   logoUrl: string;
+  alternatives: Listing[];
 };
+
+type Listing = Omit<SearchResult, "alternatives">;
 
 type Preview = SearchResult & {
   price: number;
@@ -30,6 +33,7 @@ export default function StockPicker({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [locking, setLocking] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -46,6 +50,7 @@ export default function StockPicker({
           const body = await response.json() as { error?: string; results: SearchResult[] };
           if (!response.ok) throw new Error(body.error ?? "Search failed");
           setResults(body.results);
+          setExpanded(null);
         } catch (cause) {
           if (!controller.signal.aborted) setMessage((cause as Error).message);
         } finally {
@@ -59,7 +64,7 @@ export default function StockPicker({
     };
   }, [query, selected?.symbol]);
 
-  async function choose(result: SearchResult) {
+  async function choose(result: Listing) {
     setQuery(result.symbol);
     setResults([]);
     setSelected(null);
@@ -109,21 +114,49 @@ export default function StockPicker({
         {results.length > 0 && (
           <div className="absolute z-30 mt-2 max-h-80 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-2xl dark:border-gray-700 dark:bg-gray-900">
             {results.map((result) => (
-              <button
-                key={`${result.symbol}-${result.exchange}`}
-                type="button"
-                onClick={() => void choose(result)}
-                className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-              >
-                <AssetLogo src={result.logoUrl} symbol={result.symbol} name={result.name} size={40} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-semibold">{result.name}</span>
-                  <span className="block text-xs text-gray-500">{result.symbol} · {result.exchange || result.type}</span>
-                </span>
-                <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold uppercase text-gray-500 dark:bg-gray-800">
-                  {result.type}
-                </span>
-              </button>
+              <div key={`${result.symbol}-${result.exchange}`}>
+                <button
+                  type="button"
+                  onClick={() => void choose(result)}
+                  className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                >
+                  <AssetLogo src={result.logoUrl} symbol={result.symbol} name={result.name} size={40} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{result.name}</span>
+                    <span className="block text-xs text-gray-500">{result.symbol} · {result.exchange || result.type}</span>
+                  </span>
+                  <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold uppercase text-gray-500 dark:bg-gray-800">
+                    {result.type}
+                  </span>
+                </button>
+                {result.alternatives.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-expanded={expanded === result.symbol}
+                      onClick={() => setExpanded((current) => current === result.symbol ? null : result.symbol)}
+                      className="ml-14 mb-1 rounded-md px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                    >
+                      {result.alternatives.length} other {result.alternatives.length === 1 ? "listing" : "listings"}
+                      <span aria-hidden="true"> {expanded === result.symbol ? "▴" : "▾"}</span>
+                    </button>
+                    {expanded === result.symbol && result.alternatives.map((listing) => (
+                      <button
+                        key={`${listing.symbol}-${listing.exchange}`}
+                        type="button"
+                        onClick={() => void choose(listing)}
+                        className="ml-10 flex w-[calc(100%_-_2.5rem)] items-center gap-3 rounded-lg border-l-2 border-indigo-100 p-2 text-left transition hover:bg-indigo-50 dark:border-indigo-900 dark:hover:bg-indigo-950/40"
+                      >
+                        <AssetLogo src={listing.logoUrl} symbol={listing.symbol} name={listing.name} size={32} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold">{listing.name}</span>
+                          <span className="block text-xs text-gray-500">{listing.symbol} · {listing.exchange || listing.type}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
             ))}
           </div>
         )}

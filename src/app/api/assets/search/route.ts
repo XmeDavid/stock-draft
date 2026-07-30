@@ -14,6 +14,10 @@ export async function GET(req: Request) {
     const results = (await searchTickers(query)).map((result) => ({
       ...result,
       logoUrl: logoUrlForSymbol(result.symbol),
+      alternatives: result.alternatives.map((listing) => ({
+        ...listing,
+        logoUrl: logoUrlForSymbol(listing.symbol),
+      })),
     }));
     return NextResponse.json({ results });
   } catch (e) {

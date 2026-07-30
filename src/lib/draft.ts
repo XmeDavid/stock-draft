@@ -3,6 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { assets, players, positions, races } from "@db/schema";
 import { getDb } from "@/lib/db";
 import { getRace } from "@/lib/race";
+import { findDraftedIssuer } from "@/lib/issuer";
 import { resolveTicker } from "@/lib/prices";
 export { turnFor } from "@/lib/draftOrder";
 import { turnFor } from "@/lib/draftOrder";
@@ -69,13 +70,18 @@ export async function makePick(
   }
 
   const db = getDb();
-  const [taken] = await db
-    .select({ id: positions.id })
+  const draftedAssets = await db
+    .select({ symbol: assets.symbol, name: assets.name, type: assets.type })
     .from(positions)
     .innerJoin(assets, eq(positions.assetId, assets.id))
-    .where(and(eq(assets.symbol, resolved.symbol), isNotNull(positions.pickIndex)))
-    .limit(1);
-  if (taken) throw httpError(`${resolved.symbol} already drafted`, 409);
+    .where(isNotNull(positions.pickIndex));
+  const taken = findDraftedIssuer(resolved, draftedAssets);
+  if (taken) {
+    const detail = taken.symbol === resolved.symbol
+      ? `${resolved.symbol} already drafted`
+      : `${resolved.name} already drafted as ${taken.symbol}`;
+    throw httpError(detail, 409);
+  }
 
   await db.insert(assets).values({
     symbol: resolved.symbol,

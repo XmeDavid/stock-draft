@@ -1,3 +1,5 @@
+import { issuerKey } from "@/lib/issuer";
+
 export type PriceAsset = {
   priceSource: string;
   sourceId: string;
@@ -62,7 +64,10 @@ export type TickerSearchResult = {
   name: string;
   type: string;
   exchange: string;
+  alternatives: TickerListing[];
 };
+
+export type TickerListing = Omit<TickerSearchResult, "alternatives">;
 
 function mapInstrumentType(instrumentType: unknown): string {
   switch (String(instrumentType ?? "").toUpperCase()) {
@@ -72,9 +77,33 @@ function mapInstrumentType(instrumentType: unknown): string {
       return "etf";
     case "FUTURE":
       return "gold";
-    default:
+    case "EQUITY":
       return "equity";
+    default:
+      return String(instrumentType ?? "asset").toLowerCase();
   }
+}
+
+export function groupTickerListings(listings: TickerListing[], query: string): TickerSearchResult[] {
+  const exactSymbol = query.trim().toUpperCase();
+  const groups = new Map<string, TickerListing[]>();
+
+  for (const listing of listings) {
+    const key = issuerKey(listing);
+    const group = groups.get(key);
+    if (group) group.push(listing);
+    else groups.set(key, [listing]);
+  }
+
+  return [...groups.values()].map((group) => {
+    const preferredIndex = group.findIndex((listing) => listing.symbol === exactSymbol);
+    const primaryIndex = preferredIndex >= 0 ? preferredIndex : 0;
+    const primary = group[primaryIndex];
+    return {
+      ...primary,
+      alternatives: group.filter((_, index) => index !== primaryIndex),
+    };
+  });
 }
 
 export async function resolveTicker(ticker: string): Promise<ResolvedTicker> {
@@ -108,7 +137,7 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
   if (!res.ok) throw new Error(`Yahoo search: HTTP ${res.status}`);
   const data = await res.json() as { quotes?: Record<string, unknown>[] };
   const quotes = Array.isArray(data?.quotes) ? data.quotes : [];
-  return quotes.flatMap((quote: Record<string, unknown>) => {
+  const listings = quotes.flatMap((quote: Record<string, unknown>) => {
     const symbol = typeof quote.symbol === "string" ? quote.symbol.trim().toUpperCase() : "";
     if (!symbol) return [];
     const name = (typeof quote.longname === "string" && quote.longname)
@@ -124,6 +153,7 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
       exchange,
     }];
   });
+  return groupTickerListings(listings, q);
 }
 
 async function fxRate(from: string, to: string): Promise<number> {

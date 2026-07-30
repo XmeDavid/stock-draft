@@ -105,9 +105,61 @@ describe("searchTickers", () => {
       }),
     });
     expect(await searchTickers("apple")).toEqual([
-      { symbol: "AAPL", name: "Apple Inc.", type: "equity", exchange: "NasdaqGS" },
-      { symbol: "VT", name: "Vanguard Total World Stock Index Fund ETF Shares", type: "etf", exchange: "PCX" },
+      { symbol: "AAPL", name: "Apple Inc.", type: "equity", exchange: "NasdaqGS", alternatives: [] },
+      { symbol: "VT", name: "Vanguard Total World Stock Index Fund ETF Shares", type: "etf", exchange: "PCX", alternatives: [] },
     ]);
     expect(String(mockFetch.mock.calls[0][0])).toContain("quotesCount=8");
+  });
+
+  it("groups equity listings by issuer while preserving other products", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        quotes: [
+          { symbol: "ASML", longname: "ASML Holding N.V.", quoteType: "EQUITY", exchDisp: "Nasdaq" },
+          { symbol: "ASML.AS", longname: "ASML Holding N.V.", quoteType: "EQUITY", exchDisp: "Amsterdam" },
+          { symbol: "ASML.TO", longname: "ASML CDR (CAD HEDGED)", quoteType: "ETF", exchDisp: "Toronto" },
+        ],
+      }),
+    });
+
+    expect(await searchTickers("ASML")).toEqual([
+      {
+        symbol: "ASML",
+        name: "ASML Holding N.V.",
+        type: "equity",
+        exchange: "Nasdaq",
+        alternatives: [{
+          symbol: "ASML.AS",
+          name: "ASML Holding N.V.",
+          type: "equity",
+          exchange: "Amsterdam",
+        }],
+      },
+      {
+        symbol: "ASML.TO",
+        name: "ASML CDR (CAD HEDGED)",
+        type: "etf",
+        exchange: "Toronto",
+        alternatives: [],
+      },
+    ]);
+  });
+
+  it("makes an exact share-class ticker the preferred listing", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        quotes: [
+          { symbol: "GOOG", longname: "Alphabet Inc. Class C", quoteType: "EQUITY", exchDisp: "Nasdaq" },
+          { symbol: "GOOGL", longname: "Alphabet Inc. Class A", quoteType: "EQUITY", exchDisp: "Nasdaq" },
+        ],
+      }),
+    });
+
+    expect((await searchTickers("GOOGL"))[0]).toMatchObject({
+      symbol: "GOOGL",
+      alternatives: [{ symbol: "GOOG" }],
+    });
   });
 });

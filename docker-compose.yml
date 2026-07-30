@@ -2,8 +2,10 @@ services:
   web:
     build: .
     restart: unless-stopped
+    # Loopback only: Dokploy's proxy reaches this service over the docker
+    # network, so the published port exists purely for local testing.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       DATABASE_URL: postgresql://race:${POSTGRES_PASSWORD:-changeme}@db:5432/race
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}

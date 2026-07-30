@@ -37,6 +37,13 @@ race starts, and the site tracks who's winning with daily price snapshots.
 The container runs `prisma migrate deploy` on boot, so a fresh database is set
 up automatically.
 
+Dokploy's proxy reaches the `web` service over the docker network, so no
+published host port is needed for routing. `web` therefore binds its port to
+loopback only (`127.0.0.1:3000:3000`) — that mapping exists for local
+`docker compose up` testing, and keeps the app off the server's public
+interface, where it would otherwise be reachable over plain HTTP (credentials
+in the clear) and could collide with anything else holding port 3000.
+
 ## Local dev
 
 The compose `db` service deliberately publishes no host port (it is only
@@ -70,6 +77,7 @@ Tests: `npm test`. Production build check: `npm run build`.
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Postgres connection string (set by compose) |
+| `POSTGRES_PASSWORD` | Postgres password, used by both `db` and `DATABASE_URL` (default `changeme` — set it) |
 | `ADMIN_PASSWORD` | Password for `/admin/login` |
 | `SESSION_SECRET` | Signing secret for admin and player sessions |
 | `SNAPSHOT_HOUR` | UTC hour for the daily snapshot (default `18`) |

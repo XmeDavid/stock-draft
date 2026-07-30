@@ -4,7 +4,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 
-type Race = { name: string; currency: string; status: string; startedAt: string | null };
+type Race = { name: string; currency: string; status: string; startedAt: string | null; endAt: string | null };
+
+function localDateTimeValue(iso: string | null): string {
+  if (!iso) return `${new Date().getFullYear()}-12-31T23:59`;
+  const date = new Date(iso);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
 
 export default function AdminConsole() {
   const router = useRouter();
@@ -17,7 +24,7 @@ export default function AdminConsole() {
   const [inviteCode, setInviteCode] = useState("");
   // Seeded from the race once loaded, then left alone so a refresh mid-edit
   // (including the 5 s draft poll) can't overwrite what is being typed.
-  const [settings, setSettings] = useState<{ name: string; currency: string } | null>(null);
+  const [settings, setSettings] = useState<{ name: string; currency: string; endAt: string } | null>(null);
   const [startAt, setStartAt] = useState("");
 
   // Every request funnels through here so a 401 (expired/absent cookie) always
@@ -28,7 +35,7 @@ export default function AdminConsole() {
       router.push("/admin/login");
       throw new Error("Unauthorized");
     }
-    const body = await res.json().catch(() => null);
+    const body = await res.json().catch(() => null) as { error?: string } | null;
     if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
     return body as T;
   }, [router]);
@@ -52,7 +59,11 @@ export default function AdminConsole() {
   ]).then(([d, s]) => {
     setDraft(d);
     setRace(s.race);
-    setSettings((prev) => prev ?? { name: s.race.name, currency: s.race.currency });
+    setSettings((prev) => prev ?? {
+      name: s.race.name,
+      currency: s.race.currency,
+      endAt: localDateTimeValue(s.race.endAt),
+    });
   }), [api]);
 
   useEffect(() => {
@@ -93,6 +104,16 @@ export default function AdminConsole() {
     await load().catch(() => {});
   }, [post, load]);
 
+  const onChooseMvpForPlayer = useCallback(async (playerId: number, symbol: string) => {
+    setPickError("");
+    try {
+      await post("/api/admin/draft/mvp", { playerId, symbol });
+    } catch (e) {
+      setPickError((e as Error).message);
+    }
+    await load().catch(() => {});
+  }, [post, load]);
+
   const input = "rounded border p-2 text-sm";
   const btn = "rounded bg-gray-800 px-3 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50";
   const danger = "rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50";
@@ -116,6 +137,25 @@ export default function AdminConsole() {
       {error && <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-700">{notice}</p>}
 
+      {(phase === "drafting" || phase === "drafted") && !race.endAt && (
+        <section className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <h2 className="text-lg font-semibold">Set the race end</h2>
+          <p className="text-sm">This draft predates the end-date setting. Choose the final market cutoff before starting the race.</p>
+          <div className="flex flex-wrap gap-2">
+            <input className={input} type="datetime-local" required value={settings.endAt}
+              onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
+            <button className={btn} disabled={busy} onClick={() => run(async () => {
+              await api("/api/admin/race", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ endAt: new Date(settings.endAt).toISOString() }),
+              });
+              return "Race end date saved.";
+            })}>Save end date</button>
+          </div>
+        </section>
+      )}
+
       {phase === "registration" && (
         <>
           <section className="space-y-3">
@@ -127,7 +167,11 @@ export default function AdminConsole() {
                 run(async () => {
                   await api("/api/admin/race", {
                     method: "PUT", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: settings.name, currency: settings.currency }),
+                    body: JSON.stringify({
+                      name: settings.name,
+                      currency: settings.currency,
+                      endAt: new Date(settings.endAt).toISOString(),
+                    }),
                   });
                   return "Race settings saved.";
                 });
@@ -138,6 +182,8 @@ export default function AdminConsole() {
               <input className={`${input} w-24 uppercase`} placeholder="EUR" maxLength={3} required
                 value={settings.currency}
                 onChange={(e) => setSettings({ ...settings, currency: e.target.value })} />
+              <input className={input} type="datetime-local" required value={settings.endAt}
+                onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
               <button className={btn} disabled={busy}>Save settings</button>
             </form>
             <p className="text-xs text-gray-500">Currency is a 3-letter code, e.g. EUR.</p>
@@ -227,7 +273,14 @@ export default function AdminConsole() {
         <>
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Draft result</h2>
-            <DraftBoard draft={draft} onPick={onPick} pickError={pickError} />
+            <DraftBoard
+              draft={draft}
+              onPick={onPick}
+              onChooseMvpForPlayer={onChooseMvpForPlayer}
+              pickError={pickError}
+              mvpError={pickError}
+              adminMvp
+            />
           </section>
 
           <section className="space-y-3">
@@ -237,9 +290,13 @@ export default function AdminConsole() {
                 ? `Scheduled to start ${new Date(draft.scheduledStartAt).toLocaleString()}.`
                 : "No start scheduled."}
             </p>
+            <p className="text-sm">
+              MVPs locked: <strong>{draft.mvpLockedCount}/{draft.roster.length}</strong>
+              {draft.mvpRevealed ? " — all choices revealed." : " — waiting for every player."}
+            </p>
             <button
               className={danger}
-              disabled={busy}
+              disabled={busy || !draft.mvpRevealed}
               onClick={() => {
                 if (!confirm("Start the race now? Every pick locks at the current price and this cannot be undone.")) return;
                 run(async () => {
@@ -276,12 +333,42 @@ export default function AdminConsole() {
         </>
       )}
 
-      {phase === "running" && (
+      {(phase === "running" || phase === "finished") && (
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Race running</h2>
+          <h2 className="text-lg font-semibold">{phase === "finished" ? "Race finished" : "Race running"}</h2>
           <p className="text-sm text-gray-700 dark:text-gray-300">
             Race running since {race.startedAt ? new Date(race.startedAt).toLocaleString() : "—"}.
           </p>
+          {phase === "running" && (
+            <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
+              <h3 className="font-semibold">Race ending</h3>
+              <p className="mt-1 text-xs text-gray-500">You can move the deadline while the race is running. It must remain in the future.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  className={input}
+                  type="datetime-local"
+                  required
+                  value={settings.endAt}
+                  onChange={(e) => setSettings({ ...settings, endAt: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className={`${btn} cursor-pointer`}
+                  disabled={busy || !settings.endAt}
+                  onClick={() => run(async () => {
+                    await api("/api/admin/race", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ endAt: new Date(settings.endAt).toISOString() }),
+                    });
+                    return "Race end date updated.";
+                  })}
+                >
+                  Update ending date
+                </button>
+              </div>
+            </div>
+          )}
           <Link href="/" className="text-sm text-blue-600 underline">Open the public standings</Link>
         </section>
       )}

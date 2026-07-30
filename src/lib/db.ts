@@ -1,5 +1,15 @@
-import { PrismaClient } from "@prisma/client";
+import { env } from "cloudflare:workers";
+import { drizzle } from "drizzle-orm/d1";
+import * as schema from "@db/schema";
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+export function getDb() {
+  if (!env.DB) throw new Error("Persistent database is unavailable");
+  return drizzle(env.DB, { schema });
+}
+
+export function getD1(): D1Database {
+  if (!env.DB) throw new Error("Persistent database is unavailable");
+  return env.DB;
+}
+
+export type AppDb = ReturnType<typeof getDb>;

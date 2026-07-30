@@ -21,7 +21,7 @@ export default function Register() {
         body: JSON.stringify({ inviteCode, username, password, name }),
       });
       if (res.ok) router.push("/");
-      else setError((await res.json().catch(() => ({}))).error ?? "Registration failed");
+      else setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Registration failed");
     } catch (err) {
       setError(String(err));
     } finally {

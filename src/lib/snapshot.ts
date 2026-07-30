@@ -1,50 +1,83 @@
-import { prisma } from "@/lib/db";
+import { desc, eq } from "drizzle-orm";
+import { snapshots } from "@db/schema";
+import { getDb } from "@/lib/db";
+import { getPlayersWithPositions } from "@/lib/data";
+import { getRace } from "@/lib/race";
 import { getPrices, sourceKey, type PriceAsset } from "@/lib/prices";
-import { portfolioValue } from "@/lib/valuation";
+import { portfolioValue, positionValue } from "@/lib/valuation";
 
-type Deps = { db?: typeof prisma; fetchPrices?: typeof getPrices; now?: Date };
-type BreakdownRow = { assetId: number; symbol: string; quantity: number; price: number; value: number };
+type BreakdownRow = {
+  assetId: number;
+  symbol: string;
+  quantity: number;
+  price: number;
+  value: number;
+  allocation?: number;
+  isMvp?: boolean;
+};
 
-export async function runSnapshot({ db = prisma, fetchPrices = getPrices, now = new Date() }: Deps = {}) {
-  const race = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+export async function runSnapshot(
+  { fetchPrices = getPrices, now = new Date() }: { fetchPrices?: typeof getPrices; now?: Date } = {}
+) {
+  const race = await getRace();
   if (race.status !== "running") return { skipped: `race status is ${race.status}` };
 
-  const players = await db.player.findMany({ include: { positions: { include: { asset: true } } } });
-  const assets = players.flatMap((p) => p.positions.map((pos) => pos.asset as PriceAsset));
-  const prices = await fetchPrices(assets, race.currency);
+  const playerRows = await getPlayersWithPositions();
+  const priceAssets = playerRows.flatMap((player) =>
+    player.positions.map((position) => position.asset as PriceAsset)
+  );
+  const prices = await fetchPrices(priceAssets, race.currency);
   const day = new Date(now.toISOString().slice(0, 10));
+  const db = getDb();
 
   let anyStale = false;
-  for (const player of players) {
+  for (const player of playerRows) {
     const rows: BreakdownRow[] = [];
     let stale = false;
-    for (const pos of player.positions) {
-      const a = pos.asset as PriceAsset & { symbol: string };
-      const res = prices.get(sourceKey(a));
+    for (const position of player.positions) {
+      const result = prices.get(sourceKey(position.asset as PriceAsset));
       let price: number;
-      if (res && "price" in res) {
-        price = res.price;
+      if (result && "price" in result) {
+        price = result.price;
       } else {
         stale = true;
-        price = (await lastKnownPrice(db, player.id, pos.assetId)) ?? Number(pos.startPrice);
+        price = (await lastKnownPrice(player.id, position.assetId)) ?? position.startPrice ?? 0;
       }
-      const quantity = Number(pos.quantity);
-      rows.push({ assetId: pos.assetId, symbol: a.symbol, quantity, price, value: quantity * price });
+      const quantity = position.quantity ?? 0;
+      rows.push({
+        assetId: position.assetId,
+        symbol: position.asset.symbol,
+        quantity,
+        price,
+        allocation: position.allocation,
+        isMvp: position.isMvp,
+        value: positionValue(quantity, price, position.allocation, position.isMvp),
+      });
     }
-    anyStale = anyStale || stale;
+    anyStale ||= stale;
     const totalValue = portfolioValue(rows);
-    await db.snapshot.upsert({
-      where: { playerId_date: { playerId: player.id, date: day } },
-      update: { totalValue, breakdown: rows, stale },
-      create: { playerId: player.id, date: day, totalValue, breakdown: rows, stale },
+    await db.insert(snapshots).values({
+      playerId: player.id,
+      date: day,
+      capturedAt: now,
+      totalValue,
+      breakdown: rows,
+      stale,
+    }).onConflictDoUpdate({
+      target: [snapshots.playerId, snapshots.date],
+      set: { capturedAt: now, totalValue, breakdown: rows, stale },
     });
   }
-  return { recorded: players.length, stale: anyStale };
+  return { recorded: playerRows.length, stale: anyStale };
 }
 
-async function lastKnownPrice(db: typeof prisma, playerId: number, assetId: number): Promise<number | null> {
-  const snap = await db.snapshot.findFirst({ where: { playerId }, orderBy: { date: "desc" } });
-  if (!snap) return null;
-  const rows = snap.breakdown as unknown as BreakdownRow[];
-  return rows.find((r) => r.assetId === assetId)?.price ?? null;
+async function lastKnownPrice(playerId: number, assetId: number): Promise<number | null> {
+  const [snapshot] = await getDb()
+    .select({ breakdown: snapshots.breakdown })
+    .from(snapshots)
+    .where(eq(snapshots.playerId, playerId))
+    .orderBy(desc(snapshots.date))
+    .limit(1);
+  const rows = (snapshot?.breakdown ?? []) as BreakdownRow[];
+  return rows.find((row) => row.assetId === assetId)?.price ?? null;
 }

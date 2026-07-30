@@ -4,11 +4,13 @@ export type PriceAsset = {
   quoteCurrency: string;
   type: string;
 };
-export type PriceResult = { price: number } | { error: string };
+export type PriceResult = { price: number; previousClose?: number } | { error: string };
 
 // Built per request: the abort timer starts the moment the signal is created.
+const requestHeaders = { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" };
+
 const fetchOptions = (): RequestInit => ({
-  headers: { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" },
+  headers: requestHeaders,
   signal: AbortSignal.timeout(8000),
 });
 
@@ -23,7 +25,7 @@ async function yahooChartMeta(ticker: string): Promise<Record<string, unknown>> 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${path}?interval=1d&range=1d`;
   const res = await fetch(url, fetchOptions());
   if (!res.ok) throw new Error(`yahoo ${ticker}: HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as { chart?: { result?: Array<{ meta?: Record<string, unknown> }> } };
   return data?.chart?.result?.[0]?.meta ?? {};
 }
 
@@ -34,12 +36,32 @@ async function yahooQuote(ticker: string): Promise<number> {
   return price;
 }
 
+async function yahooPricePoint(ticker: string): Promise<{ price: number; previousClose?: number }> {
+  const meta = await yahooChartMeta(ticker);
+  const price = meta.regularMarketPrice;
+  if (typeof price !== "number") throw new Error(`yahoo ${ticker}: no price in response`);
+  const previous = typeof meta.chartPreviousClose === "number"
+    ? meta.chartPreviousClose
+    : typeof meta.previousClose === "number"
+      ? meta.previousClose
+      : undefined;
+  return previous === undefined ? { price } : { price, previousClose: previous };
+}
+
 export type ResolvedTicker = {
   symbol: string;
   price: number;
   currency: string;
   name: string;
   type: string;
+  exchange: string;
+};
+
+export type TickerSearchResult = {
+  symbol: string;
+  name: string;
+  type: string;
+  exchange: string;
 };
 
 function mapInstrumentType(instrumentType: unknown): string {
@@ -67,7 +89,41 @@ export async function resolveTicker(ticker: string): Promise<ResolvedTicker> {
   const name = (typeof meta.longName === "string" && meta.longName)
     || (typeof meta.shortName === "string" && meta.shortName)
     || symbol;
-  return { symbol, price, currency, name, type: mapInstrumentType(meta.instrumentType) };
+  const exchange = (typeof meta.fullExchangeName === "string" && meta.fullExchangeName)
+    || (typeof meta.exchangeName === "string" && meta.exchangeName)
+    || "";
+  return { symbol, price, currency, name, type: mapInstrumentType(meta.instrumentType), exchange };
+}
+
+export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const url = new URL("https://query1.finance.yahoo.com/v1/finance/search");
+  url.searchParams.set("q", q);
+  url.searchParams.set("quotesCount", "8");
+  url.searchParams.set("newsCount", "0");
+  url.searchParams.set("enableFuzzyQuery", "false");
+
+  const res = await fetch(url, { headers: requestHeaders, signal: AbortSignal.timeout(5_000) });
+  if (!res.ok) throw new Error(`Yahoo search: HTTP ${res.status}`);
+  const data = await res.json() as { quotes?: Record<string, unknown>[] };
+  const quotes = Array.isArray(data?.quotes) ? data.quotes : [];
+  return quotes.flatMap((quote: Record<string, unknown>) => {
+    const symbol = typeof quote.symbol === "string" ? quote.symbol.trim().toUpperCase() : "";
+    if (!symbol) return [];
+    const name = (typeof quote.longname === "string" && quote.longname)
+      || (typeof quote.shortname === "string" && quote.shortname)
+      || symbol;
+    const exchange = (typeof quote.exchDisp === "string" && quote.exchDisp)
+      || (typeof quote.exchange === "string" && quote.exchange)
+      || "";
+    return [{
+      symbol,
+      name,
+      type: mapInstrumentType(quote.quoteType),
+      exchange,
+    }];
+  });
 }
 
 async function fxRate(from: string, to: string): Promise<number> {
@@ -81,20 +137,30 @@ async function coingeckoQuote(id: string, currency: string): Promise<number> {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=${cur}`;
   const res = await fetch(url, fetchOptions());
   if (!res.ok) throw new Error(`coingecko ${id}: HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as Record<string, Record<string, number> | undefined>;
   const price = data?.[id]?.[cur];
   if (typeof price !== "number") throw new Error(`coingecko ${id}: no price`);
   return price;
 }
 
 export async function getPrice(asset: PriceAsset, raceCurrency: string): Promise<number> {
-  if (asset.priceSource === "none") return 1; // cash: 1 unit = 1 currency unit
+  return (await getPricePoint(asset, raceCurrency)).price;
+}
+
+async function getPricePoint(
+  asset: PriceAsset,
+  raceCurrency: string
+): Promise<{ price: number; previousClose?: number }> {
+  if (asset.priceSource === "none") return { price: 1, previousClose: 1 }; // cash: 1 unit = 1 currency unit
   if (asset.priceSource === "coingecko") {
-    return coingeckoQuote(asset.sourceId, raceCurrency);
+    return { price: await coingeckoQuote(asset.sourceId, raceCurrency) };
   }
-  const raw = await yahooQuote(asset.sourceId);
+  const raw = await yahooPricePoint(asset.sourceId);
   const rate = await fxRate(asset.quoteCurrency, raceCurrency);
-  return raw * rate;
+  return {
+    price: raw.price * rate,
+    ...(raw.previousClose === undefined ? {} : { previousClose: raw.previousClose * rate }),
+  };
 }
 
 export async function getPrices(
@@ -105,7 +171,7 @@ export async function getPrices(
   for (const a of assets) {
     if (out.has(sourceKey(a))) continue;
     try {
-      out.set(sourceKey(a), { price: await getPrice(a, raceCurrency) });
+      out.set(sourceKey(a), await getPricePoint(a, raceCurrency));
     } catch (e) {
       out.set(sourceKey(a), { error: e instanceof Error ? e.message : String(e) });
     }

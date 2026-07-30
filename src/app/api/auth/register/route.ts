@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { count } from "drizzle-orm";
+import { players } from "@db/schema";
+import { getDb } from "@/lib/db";
 import { assertPhase } from "@/lib/race";
 import { hashPassword } from "@/lib/password";
 import { signToken } from "@/lib/session";
@@ -16,7 +18,12 @@ const PALETTE = [
 export async function POST(req: Request) {
   try {
     const race = await assertPhase("registration");
-    const { inviteCode, username, password, name } = await req.json();
+    const { inviteCode, username, password, name } = await req.json() as {
+      inviteCode?: unknown;
+      username?: unknown;
+      password?: unknown;
+      name?: unknown;
+    };
 
     if (!race.inviteCode || inviteCode !== race.inviteCode) {
       return NextResponse.json({ error: "Invalid invite code" }, { status: 403 });
@@ -34,10 +41,16 @@ export async function POST(req: Request) {
     }
 
     const displayName = typeof name === "string" && name.trim() ? name.trim() : user;
-    const color = PALETTE[(await prisma.player.count()) % PALETTE.length];
-    const player = await prisma.player.create({
-      data: { name: displayName, username: user, passwordHash: hashPassword(password), color },
-    });
+    const db = getDb();
+    const [{ value: playerCount }] = await db.select({ value: count() }).from(players);
+    const color = PALETTE[playerCount % PALETTE.length];
+    const [player] = await db.insert(players).values({
+      name: displayName,
+      username: user,
+      passwordHash: hashPassword(password),
+      color,
+    }).returning();
+    if (!player) throw new Error("Player could not be created");
 
     const res = NextResponse.json(
       { id: player.id, username: player.username, name: player.name },
@@ -48,7 +61,7 @@ export async function POST(req: Request) {
     });
     return res;
   } catch (e) {
-    if ((e as { code?: string }).code === "P2002") {
+    if ((e as Error).message.includes("UNIQUE constraint failed")) {
       return NextResponse.json({ error: "Username already taken" }, { status: 409 });
     }
     const status = (e as { status?: number }).status ?? 500;

@@ -1,7 +1,13 @@
-import { prisma } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { races } from "@db/schema";
+import { getDb } from "@/lib/db";
 
 export async function getRace() {
-  return prisma.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  const db = getDb();
+  await db.insert(races).values({ id: 1 }).onConflictDoNothing();
+  const [race] = await db.select().from(races).where(eq(races.id, 1)).limit(1);
+  if (!race) throw new Error("Race could not be initialized");
+  return race;
 }
 
 export async function assertPhase(...phases: string[]) {

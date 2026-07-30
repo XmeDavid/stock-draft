@@ -7,7 +7,7 @@ export async function POST(req: NextRequest) {
   if (playerId === null) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   try {
-    const { symbol } = await req.json();
+    const { symbol } = await req.json() as { symbol?: unknown };
     if (typeof symbol !== "string" || !symbol.trim())
       return NextResponse.json({ error: "symbol required" }, { status: 400 });
     const result = await makePick({ actorPlayerId: playerId, symbol: symbol.trim() });

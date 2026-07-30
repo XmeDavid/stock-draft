@@ -14,7 +14,7 @@ export default function AdminLogin() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) router.push("/admin");
-    else setError((await res.json()).error ?? "Login failed");
+    else setError(((await res.json()) as { error?: string }).error ?? "Login failed");
   }
 
   return (

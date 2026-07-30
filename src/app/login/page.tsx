@@ -19,7 +19,7 @@ export default function Login() {
         body: JSON.stringify({ username, password }),
       });
       if (res.ok) router.push("/");
-      else setError((await res.json().catch(() => ({}))).error ?? "Login failed");
+      else setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Login failed");
     } catch (err) {
       setError(String(err));
     } finally {

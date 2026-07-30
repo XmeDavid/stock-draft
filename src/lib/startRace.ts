@@ -1,81 +1,131 @@
-import { prisma } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { assets, positions, races, snapshots } from "@db/schema";
+import { getDb } from "@/lib/db";
+import { getPlayersWithPositions } from "@/lib/data";
+import { getRace } from "@/lib/race";
 import { getPrices, sourceKey, type PriceAsset } from "@/lib/prices";
 import { computeQuantity, portfolioValue } from "@/lib/valuation";
 
-type Deps = { db?: typeof prisma; fetchPrices?: typeof getPrices; now?: Date };
-
 function httpError(message: string, status: number): Error {
-  const e = new Error(message);
-  (e as Error & { status?: number }).status = status;
-  return e;
+  const error = new Error(message);
+  (error as Error & { status?: number }).status = status;
+  return error;
 }
 
-export async function startRace({ db = prisma, fetchPrices = getPrices, now = new Date() }: Deps = {}) {
-  const race = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-  if (race.status !== "drafted") throw httpError(`Race is not ready to start (status: ${race.status})`, 409);
+export async function startRace(
+  { fetchPrices = getPrices, now = new Date() }: { fetchPrices?: typeof getPrices; now?: Date } = {}
+) {
+  const race = await getRace();
+  if (race.status !== "drafted") {
+    throw httpError(`Race is not ready to start (status: ${race.status})`, 409);
+  }
+  if (!race.endAt || race.endAt <= now) {
+    throw httpError("Set a future race end date before starting", 409);
+  }
 
-  const players = await db.player.findMany({ include: { positions: { include: { asset: true } } } });
-  if (players.length === 0) throw httpError("No players configured", 409);
+  const playerRows = await getPlayersWithPositions();
+  if (playerRows.length === 0) throw httpError("No players configured", 409);
+  const missingMvp = playerRows.filter(
+    (player) => player.positions.filter((position) => position.isMvp).length !== 1
+  );
+  if (missingMvp.length > 0) {
+    throw httpError(`${missingMvp.length} player(s) still need to lock exactly one MVP`, 409);
+  }
 
-  const assets = players.flatMap((p) => p.positions.map((pos) => pos.asset as PriceAsset & { symbol: string }));
-  const prices = await fetchPrices(assets, race.currency);
-
-  const failures = assets.filter((a) => {
-    const r = prices.get(sourceKey(a));
-    return !r || "error" in r;
+  const priceAssets = playerRows.flatMap((player) =>
+    player.positions.map((position) => position.asset as PriceAsset & { symbol: string })
+  );
+  const prices = await fetchPrices(priceAssets, race.currency);
+  const failures = priceAssets.filter((asset) => {
+    const result = prices.get(sourceKey(asset));
+    return !result || "error" in result;
   });
   if (failures.length > 0) {
-    const detail = failures
-      .map((a) => {
-        const r = prices.get(sourceKey(a));
-        return `${a.symbol}: ${r && "error" in r ? r.error : "no result"}`;
-      })
-      .join("; ");
+    const detail = failures.map((asset) => {
+      const result = prices.get(sourceKey(asset));
+      return `${asset.symbol}: ${result && "error" in result ? result.error : "no result"}`;
+    }).join("; ");
     throw httpError(`Price fetch failed — race not started. ${detail}`, 502);
   }
 
-  const cashAsset = await db.asset.upsert({
-    where: { symbol: "CASH" },
-    update: {},
-    create: { symbol: "CASH", name: "Cash", type: "cash", priceSource: "none", sourceId: "", quoteCurrency: race.currency },
-  });
+  const db = getDb();
+  await db.insert(assets).values({
+    symbol: "CASH",
+    name: "Cash",
+    type: "cash",
+    priceSource: "none",
+    sourceId: "",
+    quoteCurrency: race.currency,
+  }).onConflictDoNothing();
+  const [cashAsset] = await db.select().from(assets).where(eq(assets.symbol, "CASH")).limit(1);
+  if (!cashAsset) throw new Error("Cash asset could not be initialized");
 
-  const capital = Number(race.startingCapital);
-  const day = new Date(now.toISOString().slice(0, 10)); // date-only
-
-  await db.$transaction(async (tx) => {
-    for (const player of players) {
-      const valued: { quantity: number; price: number; assetId: number; symbol: string }[] = [];
-      let allocated = 0;
-      for (const pos of player.positions) {
-        const res = prices.get(sourceKey(pos.asset as PriceAsset))!;
-        const price = (res as { price: number }).price;
-        const quantity = computeQuantity(Number(pos.allocation), price);
-        allocated += Number(pos.allocation);
-        await tx.position.update({ where: { id: pos.id }, data: { quantity, startPrice: price } });
-        valued.push({ quantity, price, assetId: pos.assetId, symbol: (pos.asset as { symbol: string }).symbol });
-      }
-      const remainder = capital - allocated;
-      if (remainder > 0.005) {
-        await tx.position.create({
-          data: { playerId: player.id, assetId: cashAsset.id, allocation: remainder, quantity: remainder, startPrice: 1 },
-        });
-        valued.push({ quantity: remainder, price: 1, assetId: cashAsset.id, symbol: "CASH" });
-      }
-      const breakdown = valued.map((v) => ({
-        assetId: v.assetId,
-        symbol: v.symbol,
-        quantity: v.quantity,
-        price: v.price,
-        value: v.quantity * v.price,
-      }));
-      const totalValue = portfolioValue(valued);
-      await tx.snapshot.upsert({
-        where: { playerId_date: { playerId: player.id, date: day } },
-        update: { totalValue, breakdown, stale: false },
-        create: { playerId: player.id, date: day, totalValue, breakdown, stale: false },
+  const day = new Date(now.toISOString().slice(0, 10));
+  const capital = race.startingCapital;
+  for (const player of playerRows) {
+    const valued: {
+      assetId: number;
+      symbol: string;
+      quantity: number;
+      price: number;
+      allocation: number;
+      isMvp: boolean;
+    }[] = [];
+    let allocated = 0;
+    for (const position of player.positions) {
+      const price = (prices.get(sourceKey(position.asset as PriceAsset)) as { price: number }).price;
+      const quantity = computeQuantity(position.allocation, price);
+      allocated += position.allocation;
+      await db.update(positions)
+        .set({ quantity, startPrice: price })
+        .where(eq(positions.id, position.id));
+      valued.push({
+        assetId: position.assetId,
+        symbol: position.asset.symbol,
+        quantity,
+        price,
+        allocation: position.allocation,
+        isMvp: position.isMvp,
       });
     }
-    await tx.race.update({ where: { id: 1 }, data: { status: "running", startedAt: now } });
-  });
+
+    const remainder = capital - allocated;
+    if (remainder > 0.005) {
+      await db.insert(positions).values({
+        playerId: player.id,
+        assetId: cashAsset.id,
+        allocation: remainder,
+        quantity: remainder,
+        startPrice: 1,
+      }).onConflictDoNothing();
+      valued.push({
+        assetId: cashAsset.id,
+        symbol: "CASH",
+        quantity: remainder,
+        price: 1,
+        allocation: remainder,
+        isMvp: false,
+      });
+    }
+
+    const breakdown = valued.map((value) => ({
+      ...value,
+      value: value.allocation,
+    }));
+    await db.insert(snapshots).values({
+      playerId: player.id,
+      date: day,
+      capturedAt: now,
+      totalValue: portfolioValue(valued),
+      breakdown,
+      stale: false,
+    }).onConflictDoUpdate({
+      target: [snapshots.playerId, snapshots.date],
+      set: { capturedAt: now, totalValue: portfolioValue(valued), breakdown, stale: false },
+    });
+  }
+
+  await db.update(races)
+    .set({ status: "running", startedAt: now, scheduledStartAt: null })
+    .where(eq(races.id, 1));
 }

@@ -5,7 +5,7 @@ export type ExportData = {
   startingCapital: number;
   players: { name: string; strategy: string; currentValue: number; gainPct: number }[];
   history: { date: string; playerName: string; totalValue: number; stale: boolean }[];
-  positions: { playerName: string; symbol: string; assetName: string; allocation: number; quantity: number; startPrice: number }[];
+  positions: { playerName: string; symbol: string; assetName: string; allocation: number; quantity: number; startPrice: number; isMvp?: boolean }[];
 };
 
 export function buildWorkbook(data: ExportData): Buffer {
@@ -23,6 +23,7 @@ export function buildWorkbook(data: ExportData): Buffer {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
     data.positions.map((p) => ({
       Player: p.playerName, Symbol: p.symbol, Asset: p.assetName,
+      MVP: p.isMvp ? "yes" : "",
       [`Allocation (${data.currency})`]: p.allocation, Quantity: p.quantity,
       [`Start price (${data.currency})`]: p.startPrice,
     }))), "Positions");

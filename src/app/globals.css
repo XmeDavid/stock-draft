@@ -20,7 +20,49 @@
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% -8%, rgb(99 102 241 / 0.14), transparent 30rem),
+    radial-gradient(circle at 95% 4%, rgb(168 85 247 / 0.10), transparent 28rem),
+    var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+::selection { background: rgb(99 102 241 / .25); }
+
+@keyframes reveal-in {
+  0% { opacity: 0; transform: scale(.86); }
+  65% { opacity: 1; transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+@keyframes emblem-pop {
+  0% { opacity: 0; transform: rotate(-12deg) scale(.25); }
+  70% { opacity: 1; transform: rotate(3deg) scale(1.1); }
+  100% { transform: rotate(0) scale(1); }
+}
+
+@keyframes confetti-fall {
+  0% { opacity: 1; transform: translate3d(0, -80px, 0) rotate(0); }
+  100% { opacity: 0; transform: translate3d(calc((var(--i) - 12) * 7px), 440px, 0) rotate(720deg); }
+}
+
+.pick-reveal > div { animation: reveal-in .45s cubic-bezier(.2,.8,.2,1) both; }
+.ticker-emblem { animation: emblem-pop .65s .15s cubic-bezier(.2,.9,.25,1.3) both; }
+.confetti i {
+  --i: 0;
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 16px;
+  border-radius: 2px;
+  animation: confetti-fall 1.8s ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pick-reveal > div,
+  .ticker-emblem,
+  .confetti i { animation: none; }
 }

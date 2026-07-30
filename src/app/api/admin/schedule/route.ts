@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { races } from "@db/schema";
+import { getDb } from "@/lib/db";
 import { assertPhase } from "@/lib/race";
 
 export async function POST(req: Request) {
   try {
-    await assertPhase("drafted");
-    const { startAt } = await req.json();
+    const raceState = await assertPhase("drafted");
+    const { startAt } = await req.json() as { startAt?: unknown };
 
     let scheduledStartAt: Date | null = null;
     if (startAt !== null && startAt !== undefined) {
@@ -16,10 +18,16 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "startAt is not a valid date" }, { status: 400 });
       if (when.getTime() <= Date.now())
         return NextResponse.json({ error: "startAt must be in the future" }, { status: 400 });
+      if (raceState.endAt && when >= raceState.endAt)
+        return NextResponse.json({ error: "startAt must be before the race end date" }, { status: 400 });
       scheduledStartAt = when;
     }
 
-    const race = await prisma.race.update({ where: { id: 1 }, data: { scheduledStartAt } });
+    const [race] = await getDb().update(races)
+      .set({ scheduledStartAt })
+      .where(eq(races.id, 1))
+      .returning();
+    if (!race) throw new Error("Race was not found");
     return NextResponse.json({ scheduledStartAt: race.scheduledStartAt?.toISOString() ?? null });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;

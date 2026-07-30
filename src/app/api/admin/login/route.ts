@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   if (Date.now() - a.ts > 15 * 60_000) { a.count = 0; a.ts = Date.now(); }
   if (a.count >= 10) return NextResponse.json({ error: "Too many attempts" }, { status: 429 });
 
-  const { password } = await req.json();
+  const { password } = await req.json() as { password?: unknown };
   if (!process.env.ADMIN_PASSWORD || password !== process.env.ADMIN_PASSWORD) {
     a.count++; attempts.set(ip, a);
     return NextResponse.json({ error: "Wrong password" }, { status: 401 });

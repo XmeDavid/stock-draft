@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeQuantity, portfolioValue, percentGain } from "@/lib/valuation";
+import { computeQuantity, portfolioValue, percentGain, positionValue } from "@/lib/valuation";
 
 describe("computeQuantity", () => {
   it("divides allocation by price", () => {
@@ -11,6 +11,22 @@ describe("computeQuantity", () => {
   it("throws on zero or negative price", () => {
     expect(() => computeQuantity(1000, 0)).toThrow();
     expect(() => computeQuantity(1000, -5)).toThrow();
+  });
+});
+
+describe("positionValue", () => {
+  it("doubles an MVP's profit and loss while preserving its starting value", () => {
+    expect(positionValue(10, 100, 1000, true)).toBe(1000);
+    expect(positionValue(10, 120, 1000, true)).toBe(1400);
+    expect(positionValue(10, 80, 1000, true)).toBe(600);
+  });
+
+  it("floors an MVP position at zero", () => {
+    expect(positionValue(10, 40, 1000, true)).toBe(0);
+  });
+
+  it("leaves ordinary positions unchanged", () => {
+    expect(positionValue(10, 120, 1000, false)).toBe(1200);
   });
 });
 

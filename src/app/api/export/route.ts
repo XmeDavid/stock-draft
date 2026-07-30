@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { getPlayersWithPositions, getSnapshotsWithPlayers } from "@/lib/data";
 import { getRace } from "@/lib/race";
 import { percentGain } from "@/lib/valuation";
 import { buildWorkbook } from "@/lib/export";
@@ -7,12 +7,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const race = await getRace();
-  const players = await prisma.player.findMany({ include: { positions: { include: { asset: true } } }, orderBy: { id: "asc" } });
-  const snaps = await prisma.snapshot.findMany({ include: { player: true }, orderBy: { date: "asc" } });
+  const [players, snapshotRows] = await Promise.all([
+    getPlayersWithPositions(),
+    getSnapshotsWithPlayers(),
+  ]);
   const capital = Number(race.startingCapital);
 
   const latestByPlayer = new Map<number, number>();
-  for (const s of snaps) latestByPlayer.set(s.playerId, Number(s.totalValue));
+  for (const { snapshot } of snapshotRows) latestByPlayer.set(snapshot.playerId, snapshot.totalValue);
 
   const buf = buildWorkbook({
     currency: race.currency,
@@ -23,13 +25,14 @@ export async function GET() {
         return { name: p.name, strategy: p.strategy, currentValue: v, gainPct: percentGain(v, capital) };
       })
       .sort((a, b) => b.currentValue - a.currentValue),
-    history: snaps.map((s) => ({
-      date: s.date.toISOString().slice(0, 10), playerName: s.player.name,
-      totalValue: Number(s.totalValue), stale: s.stale,
+    history: snapshotRows.map(({ snapshot, player }) => ({
+      date: snapshot.date.toISOString().slice(0, 10), playerName: player.name,
+      totalValue: snapshot.totalValue, stale: snapshot.stale,
     })),
     positions: players.flatMap((p) => p.positions.map((pos) => ({
       playerName: p.name, symbol: pos.asset.symbol, assetName: pos.asset.name,
       allocation: Number(pos.allocation), quantity: Number(pos.quantity ?? 0), startPrice: Number(pos.startPrice ?? 0),
+      isMvp: pos.isMvp,
     }))),
   });
 

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { players } from "@db/schema";
+import { getDb } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
 import { signToken } from "@/lib/session";
 import { PLAYER_COOKIE } from "@/lib/playerSession";
@@ -14,9 +16,11 @@ export async function POST(req: Request) {
   if (a.count >= 10) return NextResponse.json({ error: "Too many attempts" }, { status: 429 });
 
   try {
-    const { username, password } = await req.json();
+    const { username, password } = await req.json() as { username?: unknown; password?: unknown };
     const user = typeof username === "string" ? username.trim() : "";
-    const player = user ? await prisma.player.findUnique({ where: { username: user } }) : null;
+    const [player] = user
+      ? await getDb().select().from(players).where(eq(players.username, user)).limit(1)
+      : [];
 
     if (!player || typeof password !== "string" || !verifyPassword(password, player.passwordHash)) {
       a.count++; attempts.set(ip, a);

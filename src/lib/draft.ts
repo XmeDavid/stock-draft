@@ -1,33 +1,25 @@
 import { randomInt } from "node:crypto";
-import { prisma } from "@/lib/db";
+import { and, eq, isNotNull } from "drizzle-orm";
+import { assets, players, positions, races } from "@db/schema";
+import { getDb } from "@/lib/db";
+import { getRace } from "@/lib/race";
 import { resolveTicker } from "@/lib/prices";
+export { turnFor } from "@/lib/draftOrder";
+import { turnFor } from "@/lib/draftOrder";
 
 function httpError(message: string, status: number): Error {
-  const e = new Error(message);
-  (e as Error & { status?: number }).status = status;
-  return e;
+  const error = new Error(message);
+  (error as Error & { status?: number }).status = status;
+  return error;
 }
 
-/**
- * Snake-draft turn owner: pick `pickIndex` belongs to `order[i % n]` on
- * even rounds and to `order[n - 1 - (i % n)]` on odd rounds.
- */
-export function turnFor(order: number[], pickIndex: number): number {
-  const n = order.length;
-  if (n === 0) throw new Error("Draft order is empty");
-  const slot = pickIndex % n;
-  const round = Math.floor(pickIndex / n);
-  return round % 2 === 0 ? order[slot] : order[n - 1 - slot];
-}
-
-/** Unbiased Fisher-Yates using crypto randomness. */
 function cryptoShuffle(ids: number[]): number[] {
-  const out = [...ids];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = randomInt(i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
+  const result = [...ids];
+  for (let index = result.length - 1; index > 0; index--) {
+    const swap = randomInt(index + 1);
+    [result[index], result[swap]] = [result[swap], result[index]];
   }
-  return out;
+  return result;
 }
 
 function readOrder(raw: unknown): number[] {
@@ -39,37 +31,28 @@ function readOrder(raw: unknown): number[] {
   return order;
 }
 
-type StartDraftDeps = { db?: typeof prisma; shuffle?: (ids: number[]) => number[] };
-
 export async function startDraft(
-  { db = prisma, shuffle = cryptoShuffle }: StartDraftDeps = {}
+  { shuffle = cryptoShuffle }: { shuffle?: (ids: number[]) => number[] } = {}
 ): Promise<{ order: number[] }> {
-  const race = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  const race = await getRace();
   if (race.status !== "registration") {
     throw httpError(`Draft cannot start (status: ${race.status})`, 409);
   }
-  const players = await db.player.findMany({ select: { id: true } });
-  if (players.length < 2) throw httpError("At least 2 players are needed to draft", 409);
-
-  const order = shuffle(players.map((p) => p.id));
-  await db.race.update({
-    where: { id: 1 },
-    data: { status: "drafting", draftOrder: order, currentPickIndex: 0 },
-  });
+  const db = getDb();
+  const playerRows = await db.select({ id: players.id }).from(players);
+  if (playerRows.length < 2) throw httpError("At least 2 players are needed to draft", 409);
+  const order = shuffle(playerRows.map((player) => player.id));
+  await db.update(races)
+    .set({ status: "drafting", draftOrder: order, currentPickIndex: 0 })
+    .where(eq(races.id, 1));
   return { order };
 }
 
-type MakePickDeps = { db?: typeof prisma; resolve?: typeof resolveTicker };
-
 export async function makePick(
   input: { actorPlayerId: number | "admin"; symbol: string },
-  { db = prisma, resolve = resolveTicker }: MakePickDeps = {}
+  { resolve = resolveTicker }: { resolve?: typeof resolveTicker } = {}
 ): Promise<{ pickIndex: number; symbol: string; playerId: number; done: boolean }> {
-  // Pre-check outside the transaction so an obviously invalid pick never hits
-  // the network, then resolve outside it too: a slow quote must not hold a
-  // Prisma interactive transaction open (P2028). Everything is re-verified
-  // against fresh state inside the transaction before any write.
-  const pre = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  const pre = await getRace();
   if (pre.status !== "drafting") {
     throw httpError(`Draft is not open (status: ${pre.status})`, 409);
   }
@@ -81,60 +64,64 @@ export async function makePick(
   let resolved;
   try {
     resolved = await resolve(input.symbol);
-  } catch (e) {
-    throw httpError(e instanceof Error ? e.message : String(e), 400);
+  } catch (error) {
+    throw httpError(error instanceof Error ? error.message : String(error), 400);
   }
-  const symbol = resolved.symbol;
 
-  return db.$transaction(async (tx) => {
-    const race = await tx.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-    if (race.status !== "drafting") {
-      throw httpError(`Draft is not open (status: ${race.status})`, 409);
-    }
+  const db = getDb();
+  const [taken] = await db
+    .select({ id: positions.id })
+    .from(positions)
+    .innerJoin(assets, eq(positions.assetId, assets.id))
+    .where(and(eq(assets.symbol, resolved.symbol), isNotNull(positions.pickIndex)))
+    .limit(1);
+  if (taken) throw httpError(`${resolved.symbol} already drafted`, 409);
 
-    const order = readOrder(race.draftOrder);
-    const pickIndex = race.currentPickIndex;
-    const expected = turnFor(order, pickIndex);
-    if (input.actorPlayerId !== "admin" && input.actorPlayerId !== expected) {
-      throw httpError("Not your turn", 403);
-    }
-
-    const taken = await tx.position.findFirst({ where: { asset: { symbol } } });
-    if (taken) throw httpError(`${symbol} already drafted`, 409);
-
-    const asset = await tx.asset.upsert({
-      where: { symbol },
-      update: {},
-      create: {
-        symbol,
-        name: resolved.name,
-        type: resolved.type,
-        priceSource: "yahoo",
-        sourceId: symbol,
-        quoteCurrency: resolved.currency,
-      },
-    });
-
-    await tx.position.create({
-      data: {
-        playerId: expected,
-        assetId: asset.id,
-        allocation: Number(race.perPickAmount),
-        pickIndex,
-      },
-    });
-
-    const nextIndex = pickIndex + 1;
-    const done = nextIndex >= order.length * race.picksPerPlayer;
-    // Conditional advance: the index we read must still be the current one.
-    // A concurrent (double-clicked) pick that already advanced it loses here
-    // and rolls back, so one turn can never produce two positions.
-    const advanced = await tx.race.updateMany({
-      where: { id: 1, currentPickIndex: pickIndex },
-      data: done ? { currentPickIndex: nextIndex, status: "drafted" } : { currentPickIndex: nextIndex },
-    });
-    if (advanced.count === 0) throw httpError("Pick already recorded — refresh", 409);
-
-    return { pickIndex, symbol, playerId: expected, done };
+  await db.insert(assets).values({
+    symbol: resolved.symbol,
+    name: resolved.name,
+    type: resolved.type,
+    priceSource: "yahoo",
+    sourceId: resolved.symbol,
+    quoteCurrency: resolved.currency,
+  }).onConflictDoUpdate({
+    target: assets.symbol,
+    set: { name: resolved.name, type: resolved.type, quoteCurrency: resolved.currency },
   });
+  const [asset] = await db.select().from(assets).where(eq(assets.symbol, resolved.symbol)).limit(1);
+  if (!asset) throw new Error("Asset could not be saved");
+
+  const race = await getRace();
+  if (race.status !== "drafting") throw httpError(`Draft is not open (status: ${race.status})`, 409);
+  const order = readOrder(race.draftOrder);
+  const pickIndex = race.currentPickIndex;
+  const expected = turnFor(order, pickIndex);
+  if (input.actorPlayerId !== "admin" && input.actorPlayerId !== expected) {
+    throw httpError("Not your turn", 403);
+  }
+
+  const [position] = await db.insert(positions).values({
+    playerId: expected,
+    assetId: asset.id,
+    allocation: race.perPickAmount,
+    pickIndex,
+  }).returning({ id: positions.id });
+
+  const nextIndex = pickIndex + 1;
+  const done = nextIndex >= order.length * race.picksPerPlayer;
+  const advanced = await db.update(races)
+    .set(done
+      ? { currentPickIndex: nextIndex, status: "drafted" }
+      : { currentPickIndex: nextIndex })
+    .where(and(
+      eq(races.id, 1),
+      eq(races.status, "drafting"),
+      eq(races.currentPickIndex, pickIndex),
+    ))
+    .returning({ id: races.id });
+  if (advanced.length === 0) {
+    if (position) await db.delete(positions).where(eq(positions.id, position.id));
+    throw httpError("Pick already recorded — refresh", 409);
+  }
+  return { pickIndex, symbol: resolved.symbol, playerId: expected, done };
 }

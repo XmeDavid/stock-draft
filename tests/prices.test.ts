@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getPrice, getPrices, resolveTicker, sourceKey } from "@/lib/prices";
+import { getPrice, getPrices, resolveTicker, searchTickers, sourceKey } from "@/lib/prices";
 
 const yahooMeta = (meta: Record<string, unknown>) => ({
   ok: true,
@@ -24,6 +24,13 @@ describe("getPrice", () => {
   it("returns yahoo price directly when quote currency = race currency", async () => {
     mockFetch.mockResolvedValueOnce(yahooResponse(105.5));
     expect(await getPrice(eurEtf, "EUR")).toBe(105.5);
+  });
+  it("retains Yahoo previous close in batched quotes", async () => {
+    mockFetch.mockResolvedValueOnce(yahooMeta({ regularMarketPrice: 105.5, chartPreviousClose: 100 }));
+    expect((await getPrices([eurEtf], "EUR")).get(sourceKey(eurEtf))).toEqual({
+      price: 105.5,
+      previousClose: 100,
+    });
   });
   it("converts via FX when quote currency differs", async () => {
     // first call: GC=F price in USD; second call: EURUSD=X rate
@@ -63,11 +70,11 @@ describe("resolveTicker", () => {
   it("resolves price, currency, name, mapped type", async () => {
     mockFetch.mockResolvedValueOnce(yahooMeta({
       regularMarketPrice: 61234.5, currency: "USD",
-      instrumentType: "CRYPTOCURRENCY", longName: "Bitcoin USD",
+      instrumentType: "CRYPTOCURRENCY", longName: "Bitcoin USD", fullExchangeName: "CCC",
     }));
     expect(await resolveTicker(" btc-usd ")).toEqual({
       symbol: "BTC-USD", price: 61234.5, currency: "USD",
-      name: "Bitcoin USD", type: "crypto",
+      name: "Bitcoin USD", type: "crypto", exchange: "CCC",
     });
   });
   it("maps ETF and defaults to equity", async () => {
@@ -83,5 +90,24 @@ describe("resolveTicker", () => {
     await expect(resolveTicker("XXXX")).rejects.toThrow(/XXXX/);
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
     await expect(resolveTicker("YYYY")).rejects.toThrow(/YYYY/);
+  });
+});
+
+describe("searchTickers", () => {
+  it("maps Yahoo suggestions to compact asset results", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        quotes: [
+          { symbol: "AAPL", longname: "Apple Inc.", quoteType: "EQUITY", exchDisp: "NasdaqGS" },
+          { symbol: "VT", shortname: "Vanguard Total World Stock Index Fund ETF Shares", quoteType: "ETF", exchange: "PCX" },
+        ],
+      }),
+    });
+    expect(await searchTickers("apple")).toEqual([
+      { symbol: "AAPL", name: "Apple Inc.", type: "equity", exchange: "NasdaqGS" },
+      { symbol: "VT", name: "Vanguard Total World Stock Index Fund ETF Shares", type: "etf", exchange: "PCX" },
+    ]);
+    expect(String(mockFetch.mock.calls[0][0])).toContain("quotesCount=8");
   });
 });

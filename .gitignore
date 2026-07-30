@@ -18,7 +18,10 @@
 /out/
 
 # production
-/build
+/dist
+/.vinext
+/.wrangler
+.dev.vars
 
 # misc
 .DS_Store

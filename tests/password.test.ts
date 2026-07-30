@@ -4,7 +4,7 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 describe("password hashing", () => {
   it("round-trips", () => {
     const stored = hashPassword("hunter22");
-    expect(stored).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/);
+    expect(stored).toMatch(/^\$2[aby]\$12\$/);
     expect(verifyPassword("hunter22", stored)).toBe(true);
   });
   it("rejects wrong password", () => {

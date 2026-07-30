@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertSetup } from "@/lib/race";
+import { assertPhase } from "@/lib/race";
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await assertSetup();
+    await assertPhase("registration");
     const { id } = await params;
     const { name, strategy, color } = await req.json();
     const player = await prisma.player.update({
@@ -20,7 +20,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await assertSetup();
+    await assertPhase("registration");
     const { id } = await params;
     await prisma.player.delete({ where: { id: Number(id) } });
     return NextResponse.json({ ok: true });

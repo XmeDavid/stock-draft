@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertSetup } from "@/lib/race";
+import { assertPhase } from "@/lib/race";
 
 export async function GET(req: Request) {
   const playerId = new URL(req.url).searchParams.get("playerId");
@@ -14,7 +14,7 @@ export async function GET(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const race = await assertSetup();
+    const race = await assertPhase("registration");
     const { playerId, positions } = await req.json() as
       { playerId: number; positions: { assetId: number; allocation: number }[] };
     // Guard: an undefined playerId makes deleteMany's where a no-op filter,

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertSetup } from "@/lib/race";
+import { assertPhase } from "@/lib/race";
 import { TYPES, SOURCES } from "@/lib/assets";
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await assertSetup();
+    await assertPhase("registration");
     const { id } = await params;
     const { symbol, name, type, priceSource, sourceId, quoteCurrency } = await req.json();
     if (type !== undefined && !TYPES.includes(type))
@@ -25,7 +25,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await assertSetup();
+    await assertPhase("registration");
     const { id } = await params;
     await prisma.asset.delete({ where: { id: Number(id) } });
     return NextResponse.json({ ok: true });

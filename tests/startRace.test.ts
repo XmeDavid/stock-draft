@@ -6,7 +6,7 @@ function makeDb(overrides: Record<string, unknown> = {}) {
   const snapshots: unknown[] = [];
   const db = {
     race: {
-      upsert: vi.fn(async () => ({ id: 1, status: "setup", currency: "EUR", startingCapital: 10000 })),
+      upsert: vi.fn(async () => ({ id: 1, status: "drafted", currency: "EUR", startingCapital: 10000 })),
       update: vi.fn(async () => ({})),
     },
     player: {
@@ -62,6 +62,15 @@ describe("startRace", () => {
     const db = makeDb({
       race: { upsert: vi.fn(async () => ({ id: 1, status: "running", currency: "EUR", startingCapital: 10000 })), update: vi.fn() },
     });
-    await expect(startRace({ db: db as never })).rejects.toThrow(/already/i);
+    await expect(startRace({ db: db as never })).rejects.toThrow(/not ready to start \(status: running\)/);
+    expect(db.race.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the draft has not happened yet", async () => {
+    const db = makeDb({
+      race: { upsert: vi.fn(async () => ({ id: 1, status: "registration", currency: "EUR", startingCapital: 10000 })), update: vi.fn() },
+    });
+    await expect(startRace({ db: db as never })).rejects.toThrow(/not ready to start \(status: registration\)/);
+    expect(db.race.update).not.toHaveBeenCalled();
   });
 });

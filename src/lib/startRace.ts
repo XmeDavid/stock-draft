@@ -12,7 +12,7 @@ function httpError(message: string, status: number): Error {
 
 export async function startRace({ db = prisma, fetchPrices = getPrices, now = new Date() }: Deps = {}) {
   const race = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-  if (race.status !== "setup") throw httpError("Race already started", 409);
+  if (race.status !== "drafted") throw httpError(`Race is not ready to start (status: ${race.status})`, 409);
 
   const players = await db.player.findMany({ include: { positions: { include: { asset: true } } } });
   if (players.length === 0) throw httpError("No players configured", 409);

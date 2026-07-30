@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertSetup } from "@/lib/race";
+import { assertPhase } from "@/lib/race";
 import { getPrice } from "@/lib/prices";
 import { TYPES, SOURCES } from "@/lib/assets";
 
@@ -10,7 +10,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const race = await assertSetup();
+    const race = await assertPhase("registration");
     const { symbol, name, type, priceSource, sourceId = "", quoteCurrency = race.currency } = await req.json();
     if (!symbol?.trim() || !name?.trim()) return NextResponse.json({ error: "Symbol and name required" }, { status: 400 });
     if (!TYPES.includes(type)) return NextResponse.json({ error: `type must be one of ${TYPES.join(", ")}` }, { status: 400 });

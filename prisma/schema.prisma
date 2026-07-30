@@ -8,21 +8,29 @@ datasource db {
 }
 
 model Race {
-  id              Int       @id @default(1)
-  name            String    @default("Race to 1 Mil")
-  currency        String    @default("EUR")
-  startingCapital Decimal   @default(10000)
-  status          String    @default("setup") // setup | running
-  startedAt       DateTime?
+  id               Int       @id @default(1)
+  name             String    @default("Race to 1 Mil")
+  currency         String    @default("USD")
+  startingCapital  Decimal   @default(10000)
+  status           String    @default("registration") // registration | drafting | drafted | running
+  startedAt        DateTime?
+  picksPerPlayer   Int       @default(10)
+  perPickAmount    Decimal   @default(1000)
+  inviteCode       String    @default("")
+  draftOrder       Json      @default("[]")
+  currentPickIndex Int       @default(0)
+  scheduledStartAt DateTime?
 }
 
 model Player {
-  id        Int        @id @default(autoincrement())
-  name      String
-  strategy  String     @default("")
-  color     String     @default("#8884d8")
-  positions Position[]
-  snapshots Snapshot[]
+  id           Int        @id @default(autoincrement())
+  name         String
+  username     String     @unique
+  passwordHash String
+  strategy     String     @default("")
+  color        String     @default("#8884d8")
+  positions    Position[]
+  snapshots    Snapshot[]
 }
 
 model Asset {
@@ -45,6 +53,7 @@ model Position {
   allocation Decimal // amount of starting capital, in race currency
   quantity   Decimal? // null until race start
   startPrice Decimal? // null until race start, in race currency
+  pickIndex  Int? // draft pick ordinal that created this position
 
   @@unique([playerId, assetId])
 }

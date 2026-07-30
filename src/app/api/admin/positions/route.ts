@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertPhase } from "@/lib/race";
 
 export async function GET(req: Request) {
   const playerId = new URL(req.url).searchParams.get("playerId");
@@ -12,33 +11,3 @@ export async function GET(req: Request) {
   return NextResponse.json(positions);
 }
 
-export async function PUT(req: Request) {
-  try {
-    const race = await assertPhase("registration");
-    const { playerId, positions } = await req.json() as
-      { playerId: number; positions: { assetId: number; allocation: number }[] };
-    // Guard: an undefined playerId makes deleteMany's where a no-op filter,
-    // which would wipe every position in the table.
-    if (!Number.isInteger(playerId))
-      return NextResponse.json({ error: "playerId (integer) required" }, { status: 400 });
-    if (!Array.isArray(positions))
-      return NextResponse.json({ error: "positions must be an array" }, { status: 400 });
-    const total = positions.reduce((s, p) => s + p.allocation, 0);
-    if (total > Number(race.startingCapital) + 0.01)
-      return NextResponse.json(
-        { error: `Allocations (${total}) exceed starting capital (${race.startingCapital})` },
-        { status: 400 });
-    await prisma.$transaction([
-      prisma.position.deleteMany({ where: { playerId } }),
-      prisma.position.createMany({
-        data: positions.filter((p) => p.allocation > 0)
-          .map((p) => ({ playerId, assetId: p.assetId, allocation: p.allocation })),
-      }),
-    ]);
-    const saved = await prisma.position.findMany({ where: { playerId }, include: { asset: true } });
-    return NextResponse.json(saved);
-  } catch (e) {
-    const status = (e as { status?: number }).status ?? 500;
-    return NextResponse.json({ error: (e as Error).message }, { status });
-  }
-}

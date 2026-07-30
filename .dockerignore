@@ -1,0 +1,17 @@
+node_modules
+.next
+dist
+.vinext
+.wrangler
+.git
+.github
+.openai
+docs
+tests
+.superpowers
+.claude
+.tmux
+*.md
+*.tsbuildinfo
+.env*
+!.env.example

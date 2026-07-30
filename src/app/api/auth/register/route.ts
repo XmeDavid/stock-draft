@@ -61,7 +61,8 @@ export async function POST(req: Request) {
     });
     return res;
   } catch (e) {
-    if ((e as Error).message.includes("UNIQUE constraint failed")) {
+    const databaseCode = (e as { cause?: { code?: string } }).cause?.code;
+    if (databaseCode === "23505") {
       return NextResponse.json({ error: "Username already taken" }, { status: 409 });
     }
     const status = (e as { status?: number }).status ?? 500;

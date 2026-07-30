@@ -1,24 +1,35 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  boolean,
+  date,
+  doublePrecision,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
-export const races = sqliteTable("races", {
+export const races = pgTable("races", {
   id: integer("id").primaryKey(),
   name: text("name").notNull().default("Race to 1 Mil"),
   currency: text("currency").notNull().default("USD"),
-  startingCapital: real("starting_capital").notNull().default(9000),
+  startingCapital: doublePrecision("starting_capital").notNull().default(9000),
   status: text("status").notNull().default("registration"),
-  startedAt: integer("started_at", { mode: "timestamp_ms" }),
-  endAt: integer("end_at", { mode: "timestamp_ms" }),
-  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  endAt: timestamp("end_at", { withTimezone: true, mode: "date" }),
+  finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
   picksPerPlayer: integer("picks_per_player").notNull().default(9),
-  perPickAmount: real("per_pick_amount").notNull().default(1000),
+  perPickAmount: doublePrecision("per_pick_amount").notNull().default(1000),
   inviteCode: text("invite_code").notNull().default(""),
-  draftOrder: text("draft_order", { mode: "json" }).$type<number[]>().notNull().default([]),
+  draftOrder: jsonb("draft_order").$type<number[]>().notNull().default([]),
   currentPickIndex: integer("current_pick_index").notNull().default(0),
-  scheduledStartAt: integer("scheduled_start_at", { mode: "timestamp_ms" }),
+  scheduledStartAt: timestamp("scheduled_start_at", { withTimezone: true, mode: "date" }),
 });
 
-export const players = sqliteTable("players", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const players = pgTable("players", {
+  id: serial("id").primaryKey(),
   name: text("name").notNull(),
   username: text("username").notNull(),
   passwordHash: text("password_hash").notNull(),
@@ -26,8 +37,8 @@ export const players = sqliteTable("players", {
   color: text("color").notNull().default("#8884d8"),
 }, (table) => [uniqueIndex("players_username_unique").on(table.username)]);
 
-export const assets = sqliteTable("assets", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const assets = pgTable("assets", {
+  id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
   name: text("name").notNull(),
   type: text("type").notNull(),
@@ -36,23 +47,23 @@ export const assets = sqliteTable("assets", {
   quoteCurrency: text("quote_currency").notNull().default("USD"),
 }, (table) => [uniqueIndex("assets_symbol_unique").on(table.symbol)]);
 
-export const positions = sqliteTable("positions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const positions = pgTable("positions", {
+  id: serial("id").primaryKey(),
   playerId: integer("player_id").notNull().references(() => players.id, { onDelete: "cascade" }),
   assetId: integer("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
-  allocation: real("allocation").notNull(),
-  quantity: real("quantity"),
-  startPrice: real("start_price"),
+  allocation: doublePrecision("allocation").notNull(),
+  quantity: doublePrecision("quantity"),
+  startPrice: doublePrecision("start_price"),
   pickIndex: integer("pick_index"),
-  isMvp: integer("is_mvp", { mode: "boolean" }).notNull().default(false),
+  isMvp: boolean("is_mvp").notNull().default(false),
 }, (table) => [uniqueIndex("positions_player_asset_unique").on(table.playerId, table.assetId)]);
 
-export const snapshots = sqliteTable("snapshots", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const snapshots = pgTable("snapshots", {
+  id: serial("id").primaryKey(),
   playerId: integer("player_id").notNull().references(() => players.id, { onDelete: "cascade" }),
-  date: integer("date", { mode: "timestamp_ms" }).notNull(),
-  capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
-  totalValue: real("total_value").notNull(),
-  breakdown: text("breakdown", { mode: "json" }).$type<unknown>().notNull(),
-  stale: integer("stale", { mode: "boolean" }).notNull().default(false),
+  date: date("date", { mode: "date" }).notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" }).notNull(),
+  totalValue: doublePrecision("total_value").notNull(),
+  breakdown: jsonb("breakdown").$type<unknown>().notNull(),
+  stale: boolean("stale").notNull().default(false),
 }, (table) => [uniqueIndex("snapshots_player_date_unique").on(table.playerId, table.date)]);

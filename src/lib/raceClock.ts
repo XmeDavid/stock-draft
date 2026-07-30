@@ -7,8 +7,8 @@ import { runSnapshot } from "@/lib/snapshot";
 import { startRace } from "@/lib/startRace";
 
 /**
- * Sites workers do not stay alive between requests. The first visitor after a
- * scheduled boundary advances the clock and records any due daily snapshot.
+ * The first visitor after a scheduled boundary advances the clock and records
+ * any due daily snapshot, so deployment restarts cannot lose a race event.
  */
 export async function advanceRaceClock(now = new Date()) {
   let race = await getRace();

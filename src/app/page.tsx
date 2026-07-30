@@ -41,6 +41,11 @@ export default function Home() {
   const [mvpError, setMvpError] = useState("");
   const [refreshingPrices, setRefreshingPrices] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [strategy, setStrategy] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [profileNotice, setProfileNotice] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
   const [revealPick, setRevealPick] = useState<DraftState["picks"][number] | null>(null);
   const seenPickCount = useRef<number | null>(null);
 
@@ -166,6 +171,29 @@ export default function Home() {
     await loadDraft().catch(() => {});
   }
 
+  async function saveStrategy(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      const response = await fetch("/api/player/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ strategy }),
+      });
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`);
+      await loadDraft();
+      setStrategy(strategy.trim());
+      setProfileNotice("Strategy saved.");
+    } catch (cause) {
+      setProfileError((cause as Error).message);
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
   if (error) return <main className="p-8">Failed to load: {error}</main>;
   if (!draft) return <main className="p-8">Loading…</main>;
 
@@ -213,6 +241,18 @@ export default function Home() {
           {loggedIn ? (
             <>
               <span className="hidden text-gray-500 sm:inline">logged in as {me?.name ?? me?.username ?? "player"}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStrategy(me?.strategy ?? "");
+                  setProfileError("");
+                  setProfileNotice("");
+                  setProfileOpen((open) => !open);
+                }}
+                className="rounded border px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                Edit strategy
+              </button>
               <button onClick={logout} className="rounded border px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800">Log out</button>
             </>
           ) : draft.status === "registration" ? (
@@ -225,6 +265,40 @@ export default function Home() {
           )}
         </div>
       </header>
+
+      {loggedIn && profileOpen && (
+        <section className="rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 dark:border-indigo-900 dark:bg-indigo-950/20">
+          <form className="space-y-3" onSubmit={saveStrategy}>
+            <div>
+              <label htmlFor="player-strategy" className="font-semibold">Your strategy</label>
+              <p className="mt-1 text-xs text-gray-500">
+                A short description shown on your player card. It does not affect scoring or limit your picks.
+              </p>
+            </div>
+            <textarea
+              id="player-strategy"
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              maxLength={160}
+              rows={3}
+              placeholder="For example: Long-term growth with a soft spot for semiconductors"
+              className="w-full rounded-lg border border-gray-300 bg-white p-3 text-sm dark:border-gray-700 dark:bg-gray-950"
+              autoFocus
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                disabled={savingProfile}
+                className="rounded bg-gray-800 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              >
+                {savingProfile ? "Saving…" : "Save strategy"}
+              </button>
+              <span className="text-xs text-gray-500">{strategy.length}/160</span>
+              {profileError && <span className="text-sm text-red-600">{profileError}</span>}
+              {profileNotice && <span className="text-sm text-green-700 dark:text-green-400">{profileNotice}</span>}
+            </div>
+          </form>
+        </section>
+      )}
 
       {showInlineRules && (
         <GameRules

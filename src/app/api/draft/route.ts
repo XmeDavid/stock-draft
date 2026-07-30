@@ -16,7 +16,13 @@ export async function GET(req: NextRequest) {
   const race = await getRace();
   const db = getDb();
   const playerRows = await db
-    .select({ id: players.id, name: players.name, username: players.username, color: players.color })
+    .select({
+      id: players.id,
+      name: players.name,
+      username: players.username,
+      strategy: players.strategy,
+      color: players.color,
+    })
     .from(players)
     .orderBy(asc(players.id));
 

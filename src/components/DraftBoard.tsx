@@ -2,7 +2,7 @@
 import AssetLogo from "@/components/AssetLogo";
 import StockPicker from "@/components/StockPicker";
 
-export type DraftPlayer = { id: number; name: string; username: string; color: string };
+export type DraftPlayer = { id: number; name: string; username: string; strategy: string; color: string };
 export type DraftPick = {
   pickIndex: number;
   playerId: number;

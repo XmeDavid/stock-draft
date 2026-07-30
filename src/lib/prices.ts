@@ -12,7 +12,7 @@ export function sourceKey(a: PriceAsset): string {
   return `${a.priceSource}:${a.sourceId}`;
 }
 
-async function yahooQuote(ticker: string): Promise<number> {
+async function yahooChartMeta(ticker: string): Promise<Record<string, unknown>> {
   // Tickers contain "=" ("GC=F", "EURUSD=X"), which is legal in a URL path
   // segment — keep it literal while escaping anything else unsafe.
   const path = encodeURIComponent(ticker).replace(/%3D/g, "=");
@@ -20,9 +20,50 @@ async function yahooQuote(ticker: string): Promise<number> {
   const res = await fetch(url, UA);
   if (!res.ok) throw new Error(`yahoo ${ticker}: HTTP ${res.status}`);
   const data = await res.json();
-  const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  return data?.chart?.result?.[0]?.meta ?? {};
+}
+
+async function yahooQuote(ticker: string): Promise<number> {
+  const meta = await yahooChartMeta(ticker);
+  const price = meta.regularMarketPrice;
   if (typeof price !== "number") throw new Error(`yahoo ${ticker}: no price in response`);
   return price;
+}
+
+export type ResolvedTicker = {
+  symbol: string;
+  price: number;
+  currency: string;
+  name: string;
+  type: string;
+};
+
+function mapInstrumentType(instrumentType: unknown): string {
+  switch (String(instrumentType ?? "").toUpperCase()) {
+    case "CRYPTOCURRENCY":
+      return "crypto";
+    case "ETF":
+      return "etf";
+    case "FUTURE":
+      return "gold";
+    default:
+      return "equity";
+  }
+}
+
+export async function resolveTicker(ticker: string): Promise<ResolvedTicker> {
+  const symbol = ticker.trim().toUpperCase();
+  const meta = await yahooChartMeta(symbol);
+  const price = meta.regularMarketPrice;
+  if (typeof price !== "number") throw new Error(`yahoo ${symbol}: no price in response`);
+  const currency = meta.currency;
+  if (typeof currency !== "string" || !currency) {
+    throw new Error(`yahoo ${symbol}: no currency in response`);
+  }
+  const name = (typeof meta.longName === "string" && meta.longName)
+    || (typeof meta.shortName === "string" && meta.shortName)
+    || symbol;
+  return { symbol, price, currency, name, type: mapInstrumentType(meta.instrumentType) };
 }
 
 async function fxRate(from: string, to: string): Promise<number> {

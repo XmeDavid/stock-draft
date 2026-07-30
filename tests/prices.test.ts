@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getPrice, getPrices, sourceKey } from "@/lib/prices";
+import { getPrice, getPrices, resolveTicker, sourceKey } from "@/lib/prices";
 
-const yahooResponse = (price: number) => ({
+const yahooMeta = (meta: Record<string, unknown>) => ({
   ok: true,
-  json: async () => ({
-    chart: { result: [{ meta: { regularMarketPrice: price } }] },
-  }),
+  json: async () => ({ chart: { result: [{ meta }] } }),
 });
+const yahooResponse = (price: number) => yahooMeta({ regularMarketPrice: price });
 const geckoResponse = (id: string, cur: string, price: number) => ({
   ok: true,
   json: async () => ({ [id]: { [cur.toLowerCase()]: price } }),
@@ -57,5 +56,32 @@ describe("getPrices", () => {
     const res = await getPrices([eurEtf, btc], "EUR");
     expect(res.get(sourceKey(eurEtf))).toEqual({ price: 100 });
     expect(res.get(sourceKey(btc))).toHaveProperty("error");
+  });
+});
+
+describe("resolveTicker", () => {
+  it("resolves price, currency, name, mapped type", async () => {
+    mockFetch.mockResolvedValueOnce(yahooMeta({
+      regularMarketPrice: 61234.5, currency: "USD",
+      instrumentType: "CRYPTOCURRENCY", longName: "Bitcoin USD",
+    }));
+    expect(await resolveTicker(" btc-usd ")).toEqual({
+      symbol: "BTC-USD", price: 61234.5, currency: "USD",
+      name: "Bitcoin USD", type: "crypto",
+    });
+  });
+  it("maps ETF and defaults to equity", async () => {
+    mockFetch.mockResolvedValueOnce(yahooMeta({ regularMarketPrice: 1, currency: "EUR", instrumentType: "ETF" }));
+    expect((await resolveTicker("VWCE.DE")).type).toBe("etf");
+    mockFetch.mockResolvedValueOnce(yahooMeta({ regularMarketPrice: 1, currency: "USD", instrumentType: "EQUITY", shortName: "NVIDIA" }));
+    const r = await resolveTicker("NVDA");
+    expect(r.type).toBe("equity");
+    expect(r.name).toBe("NVIDIA");
+  });
+  it("throws on missing price or not-ok", async () => {
+    mockFetch.mockResolvedValueOnce(yahooMeta({ currency: "USD" }));
+    await expect(resolveTicker("XXXX")).rejects.toThrow(/XXXX/);
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    await expect(resolveTicker("YYYY")).rejects.toThrow(/YYYY/);
   });
 });

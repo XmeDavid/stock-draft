@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import Chart from "@/components/Chart";
 import Leaderboard from "@/components/Leaderboard";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
@@ -171,6 +172,7 @@ export default function Home() {
   const loggedIn = draft.yourPlayerId !== null;
   const me = loggedIn ? draft.roster.find((player) => player.id === draft.yourPlayerId) : undefined;
   const inSeason = draft.status === "running" || draft.status === "finished";
+  const showInlineRules = !loggedIn && draft.status === "registration";
   if (inSeason && !standings) return <main className="p-8">Loading…</main>;
 
   return (
@@ -190,18 +192,24 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <button
-            type="button"
-            onClick={() => {
-              setRulesOpen(true);
-              window.requestAnimationFrame(() => {
-                document.getElementById("rules")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-            className="cursor-pointer rounded border px-3 py-2 font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
-          >
-            How to play
-          </button>
+          {showInlineRules ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRulesOpen(true);
+                window.requestAnimationFrame(() => {
+                  document.getElementById("rules")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              }}
+              className="cursor-pointer rounded border px-3 py-2 font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              How to play
+            </button>
+          ) : (
+            <Link href="/rules" className="text-xs font-semibold text-gray-500 underline hover:text-gray-900 dark:hover:text-gray-100">
+              Rules
+            </Link>
+          )}
           {loggedIn ? (
             <>
               <span className="hidden text-gray-500 sm:inline">logged in as {me?.name ?? me?.username ?? "player"}</span>
@@ -218,13 +226,15 @@ export default function Home() {
         </div>
       </header>
 
-      <GameRules
-        currency={draft.currency}
-        picksPerPlayer={draft.picksPerPlayer}
-        perPickAmount={draft.perPickAmount}
-        open={rulesOpen}
-        onOpenChange={setRulesOpen}
-      />
+      {showInlineRules && (
+        <GameRules
+          currency={draft.currency}
+          picksPerPlayer={draft.picksPerPlayer}
+          perPickAmount={draft.perPickAmount}
+          open={rulesOpen}
+          onOpenChange={setRulesOpen}
+        />
+      )}
 
       {(draft.status === "registration" || draft.status === "drafting") && draft.scheduledStartAt && (
         <section className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">

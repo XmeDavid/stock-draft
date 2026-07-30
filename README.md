@@ -8,7 +8,7 @@ the site tracks the winner with live quotes and daily history.
 
 1. **Registration** — the admin sets an invite code. Players create their own
    username and password at `/register`.
-2. **Draft** — a randomized snake draft gives every player nine picks at
+2. **Draft** — a randomized snake draft gives every player ten picks at
    $1,000 each. Search validates Yahoo Finance tickers, groups alternate equity
    listings by issuer, and shows the company, exchange, quote, and logo before
    a pick is locked.

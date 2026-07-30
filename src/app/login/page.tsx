@@ -44,7 +44,7 @@ export default function Login() {
       <p className="mt-4 text-sm text-gray-500">
         Need an invite? <Link href="/register" className="underline">Register</Link>
         {" · "}
-        <Link href="/#rules" className="underline">How to play</Link>
+        <Link href="/rules" className="underline">How to play</Link>
       </p>
     </main>
   );

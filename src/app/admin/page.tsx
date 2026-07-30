@@ -5,8 +5,14 @@ import Link from "next/link";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 
 type Race = { name: string; currency: string; status: string; startedAt: string | null; endAt: string | null };
-type AdminRace = { inviteCode: string };
-type RaceSettings = { name: string; currency: string; endAt: string; startAt: string };
+type AdminRace = { inviteCode: string; picksPerPlayer: number };
+type RaceSettings = {
+  name: string;
+  currency: string;
+  endAt: string;
+  startAt: string;
+  picksPerPlayer: number;
+};
 
 function localDateTimeValue(iso: string | null): string {
   if (!iso) return `${new Date().getFullYear()}-12-31T23:59`;
@@ -67,6 +73,7 @@ export default function AdminConsole() {
       currency: s.race.currency,
       endAt: localDateTimeValue(s.race.endAt),
       startAt: d.scheduledStartAt ? localDateTimeValue(d.scheduledStartAt) : "",
+      picksPerPlayer: adminRace.picksPerPlayer,
     });
   }), [api]);
 
@@ -175,6 +182,7 @@ export default function AdminConsole() {
                       name: settings.name,
                       currency: settings.currency,
                       endAt: new Date(settings.endAt).toISOString(),
+                      picksPerPlayer: settings.picksPerPlayer,
                     }),
                   });
                   await post("/api/admin/schedule", {
@@ -197,6 +205,22 @@ export default function AdminConsole() {
                     onChange={(e) => setSettings({ ...settings, currency: e.target.value })} />
                 </label>
                 <label className="space-y-1 text-sm font-medium">
+                  <span>Stock picks per player</span>
+                  <input
+                    className={`${input} w-full`}
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    required
+                    value={settings.picksPerPlayer}
+                    onChange={(e) => setSettings({
+                      ...settings,
+                      picksPerPlayer: e.target.valueAsNumber,
+                    })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm font-medium">
                   <span>Automatic start <span className="font-normal text-gray-500">(optional)</span></span>
                   <input className={`${input} w-full`} type="datetime-local" value={settings.startAt}
                     onChange={(e) => setSettings({ ...settings, startAt: e.target.value })} />
@@ -211,7 +235,7 @@ export default function AdminConsole() {
             </form>
             <p className="text-xs text-gray-500">
               Times use your local timezone. Auto-start waits until the draft and all MVP choices are complete.
-              Currency is a 3-letter code, e.g. EUR.
+              Currency is a 3-letter code, e.g. EUR. Pick count locks when the draft starts.
             </p>
           </section>
 

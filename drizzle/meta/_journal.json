@@ -8,6 +8,13 @@
       "when": 1785426681465,
       "tag": "0000_majestic_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785432269594,
+      "tag": "0001_thankful_lady_deathstrike",
+      "breakpoints": true
     }
   ]
 }

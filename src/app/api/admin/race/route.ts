@@ -12,25 +12,37 @@ export async function GET() {
     inviteCode: race.inviteCode,
     status: race.status,
     endAt: race.endAt?.toISOString() ?? null,
+    picksPerPlayer: race.picksPerPlayer,
   });
 }
 
 export async function PUT(req: Request) {
   try {
     const current = await getRace();
-    const { inviteCode, name, currency, endAt } = await req.json() as {
+    const { inviteCode, name, currency, endAt, picksPerPlayer } = await req.json() as {
       inviteCode?: unknown;
       name?: unknown;
       currency?: unknown;
       endAt?: unknown;
+      picksPerPlayer?: unknown;
     };
-    const data: { inviteCode?: string; name?: string; currency?: string; endAt?: Date } = {};
+    const data: {
+      inviteCode?: string;
+      name?: string;
+      currency?: string;
+      endAt?: Date;
+      picksPerPlayer?: number;
+      startingCapital?: number;
+    } = {};
 
     if (
       current.status !== "registration" &&
-      (inviteCode !== undefined || name !== undefined || currency !== undefined)
+      (inviteCode !== undefined || name !== undefined || currency !== undefined || picksPerPlayer !== undefined)
     ) {
-      return NextResponse.json({ error: "Name, currency, and invite code lock when the draft starts" }, { status: 409 });
+      return NextResponse.json(
+        { error: "Name, currency, invite code, and picks per player lock when the draft starts" },
+        { status: 409 }
+      );
     }
     if (!["registration", "drafting", "drafted", "running"].includes(current.status)) {
       return NextResponse.json({ error: `Race settings are locked (status: ${current.status})` }, { status: 409 });
@@ -52,6 +64,16 @@ export async function PUT(req: Request) {
         return NextResponse.json({ error: "currency must be a 3-letter code" }, { status: 400 });
       data.currency = code;
     }
+    if (picksPerPlayer !== undefined) {
+      if (!Number.isInteger(picksPerPlayer) || (picksPerPlayer as number) < 1 || (picksPerPlayer as number) > 100) {
+        return NextResponse.json(
+          { error: "picksPerPlayer must be a whole number from 1 to 100" },
+          { status: 400 }
+        );
+      }
+      data.picksPerPlayer = picksPerPlayer as number;
+      data.startingCapital = (picksPerPlayer as number) * Number(current.perPickAmount);
+    }
     if (endAt !== undefined) {
       if (typeof endAt !== "string") {
         return NextResponse.json({ error: "endAt must be a date string" }, { status: 400 });
@@ -71,6 +93,7 @@ export async function PUT(req: Request) {
       inviteCode: race.inviteCode,
       status: race.status,
       endAt: race.endAt?.toISOString() ?? null,
+      picksPerPlayer: race.picksPerPlayer,
     });
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;

@@ -19,16 +19,20 @@ export type DraftState = {
 };
 
 export default function DraftBoard({
-  draft, onPick, pickError,
+  draft, onPick, pickError, adminPick = false,
 }: {
   draft: DraftState;
   onPick: (symbol: string) => void | Promise<void>;
   pickError?: string;
+  /** Admin variant: the pick form stays visible for whoever is on the clock. */
+  adminPick?: boolean;
 }) {
   const [symbol, setSymbol] = useState("");
   const { order, roster, picks, picksPerPlayer, status } = draft;
 
   const byId = new Map(roster.map((p) => [p.id, p]));
+  const currentPlayer = draft.currentPlayerId === null ? undefined : byId.get(draft.currentPlayerId);
+  const canPick = adminPick ? status === "drafting" && currentPlayer !== undefined : draft.yourTurn;
   const columns = order.map((id) => byId.get(id)).filter((p): p is DraftPlayer => p !== undefined);
   const byPickIndex = new Map(picks.map((p) => [p.pickIndex, p]));
   const n = order.length;
@@ -125,8 +129,11 @@ export default function DraftBoard({
         </table>
       </div>
 
-      {draft.yourTurn && (
+      {canPick && (
         <form onSubmit={submit} className="space-y-2">
+          {adminPick && (
+            <label className="block text-sm font-semibold">Pick for {currentPlayer?.name}</label>
+          )}
           <div className="flex gap-2">
             <input value={symbol} onChange={(e) => setSymbol(e.target.value)}
               placeholder="Ticker (e.g. AAPL)" className="flex-1 rounded border p-2 font-mono uppercase" autoFocus />
@@ -135,7 +142,7 @@ export default function DraftBoard({
           {pickError && <p className="text-sm text-red-600">{pickError}</p>}
         </form>
       )}
-      {!draft.yourTurn && pickError && <p className="text-sm text-red-600">{pickError}</p>}
+      {!canPick && pickError && <p className="text-sm text-red-600">{pickError}</p>}
     </div>
   );
 }

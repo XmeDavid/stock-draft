@@ -1390,7 +1390,9 @@ Update `src/app/layout.tsx` metadata title to `"Race to 1 Mil"`.
 - [ ] **Step 5: Build check** — `npm run build`
 - [ ] **Step 6: Commit** — `feat: public leaderboard page with progress chart`
 
----### Task 9: Admin UI
+---
+
+### Task 9: Admin UI
 
 **Files:**
 - Create: `src/app/admin/page.tsx`, `src/app/admin/login/page.tsx`

@@ -20,23 +20,38 @@ function makeDb(race: Partial<RaceFixture> = {}, overrides: Record<string, unkno
     perPickAmount: 1000,
     ...race,
   };
+  const positions: unknown[] = [];
   const db = {
     race: {
       upsert: vi.fn(async () => raceRow),
       update: vi.fn(async () => raceRow),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     player: {
       findMany: vi.fn(async () => [{ id: 1 }, { id: 2 }]),
     },
     position: {
       findFirst: vi.fn(async () => null),
-      create: vi.fn(async ({ data }: { data: unknown }) => ({ id: 77, ...(data as object) })),
+      create: vi.fn(async ({ data }: { data: unknown }) => {
+        positions.push(data);
+        return { id: 77, ...(data as object) };
+      }),
     },
     asset: {
       upsert: vi.fn(async ({ create }: { create: { symbol: string } }) => ({ id: 42, ...create })),
     },
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(db)),
+    // Models rollback: writes recorded inside a failed transaction are discarded.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const mark = positions.length;
+      try {
+        return await fn(db);
+      } catch (e) {
+        positions.length = mark;
+        throw e;
+      }
+    }),
     _race: raceRow,
+    _positions: positions,
     ...overrides,
   };
   return db;
@@ -120,12 +135,11 @@ describe("makePick", () => {
     expect(db.position.create).toHaveBeenCalledWith({
       data: { playerId: 2, assetId: 42, allocation: 1000, pickIndex: 1 },
     });
-    expect(db.race.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ currentPickIndex: 2 }) })
-    );
-    expect(db.race.update).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "drafted" }) })
-    );
+    // Advance is conditional on the index we read still being current.
+    expect(db.race.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, currentPickIndex: 1 },
+      data: { currentPickIndex: 2 },
+    });
   });
 
   it("rejects a player picking out of turn with 403", async () => {
@@ -184,8 +198,40 @@ describe("makePick", () => {
     const resolve = vi.fn(async () => resolved);
     const out = await makePick({ actorPlayerId: 1, symbol: "AAPL" }, { db: db as never, resolve: resolve as never });
     expect(out).toEqual({ pickIndex: 3, symbol: "AAPL", playerId: 1, done: true });
-    expect(db.race.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ currentPickIndex: 4, status: "drafted" }) })
-    );
+    expect(db.race.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, currentPickIndex: 3 },
+      data: { currentPickIndex: 4, status: "drafted" },
+    });
+  });
+
+  it("rejects a double submit for the same turn with 409 and creates one position", async () => {
+    const db = makeDb({ currentPickIndex: 0 });
+    // First advance wins; the second sees the index already moved on.
+    db.race.updateMany
+      .mockImplementationOnce(async () => ({ count: 1 }))
+      .mockImplementationOnce(async () => ({ count: 0 }));
+    const resolve = vi.fn(async () => resolved);
+    const deps = { db: db as never, resolve: resolve as never };
+
+    await expect(makePick({ actorPlayerId: 1, symbol: "AAPL" }, deps)).resolves.toMatchObject({ pickIndex: 0 });
+    await expect(makePick({ actorPlayerId: 1, symbol: "AAPL" }, deps)).rejects.toMatchObject({
+      status: 409,
+      message: "Pick already recorded — refresh",
+    });
+    // The losing transaction rolled back: exactly one position survives.
+    expect(db.position.create).toHaveBeenCalledTimes(2);
+    expect(db._positions).toEqual([{ playerId: 1, assetId: 42, allocation: 1000, pickIndex: 0 }]);
+  });
+
+  it("resolves before opening the transaction", async () => {
+    const db = makeDb();
+    const resolve = vi.fn(async () => {
+      throw new Error("yahoo NOPE: HTTP 500");
+    });
+    await expect(
+      makePick({ actorPlayerId: 1, symbol: "NOPE" }, { db: db as never, resolve: resolve as never })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(resolve).toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 });

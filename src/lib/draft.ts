@@ -65,6 +65,27 @@ export async function makePick(
   input: { actorPlayerId: number | "admin"; symbol: string },
   { db = prisma, resolve = resolveTicker }: MakePickDeps = {}
 ): Promise<{ pickIndex: number; symbol: string; playerId: number; done: boolean }> {
+  // Pre-check outside the transaction so an obviously invalid pick never hits
+  // the network, then resolve outside it too: a slow quote must not hold a
+  // Prisma interactive transaction open (P2028). Everything is re-verified
+  // against fresh state inside the transaction before any write.
+  const pre = await db.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  if (pre.status !== "drafting") {
+    throw httpError(`Draft is not open (status: ${pre.status})`, 409);
+  }
+  const preExpected = turnFor(readOrder(pre.draftOrder), pre.currentPickIndex);
+  if (input.actorPlayerId !== "admin" && input.actorPlayerId !== preExpected) {
+    throw httpError("Not your turn", 403);
+  }
+
+  let resolved;
+  try {
+    resolved = await resolve(input.symbol);
+  } catch (e) {
+    throw httpError(e instanceof Error ? e.message : String(e), 400);
+  }
+  const symbol = resolved.symbol;
+
   return db.$transaction(async (tx) => {
     const race = await tx.race.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
     if (race.status !== "drafting") {
@@ -77,14 +98,6 @@ export async function makePick(
     if (input.actorPlayerId !== "admin" && input.actorPlayerId !== expected) {
       throw httpError("Not your turn", 403);
     }
-
-    let resolved;
-    try {
-      resolved = await resolve(input.symbol);
-    } catch (e) {
-      throw httpError(e instanceof Error ? e.message : String(e), 400);
-    }
-    const symbol = resolved.symbol;
 
     const taken = await tx.position.findFirst({ where: { asset: { symbol } } });
     if (taken) throw httpError(`${symbol} already drafted`, 409);
@@ -113,10 +126,14 @@ export async function makePick(
 
     const nextIndex = pickIndex + 1;
     const done = nextIndex >= order.length * race.picksPerPlayer;
-    await tx.race.update({
-      where: { id: 1 },
+    // Conditional advance: the index we read must still be the current one.
+    // A concurrent (double-clicked) pick that already advanced it loses here
+    // and rolls back, so one turn can never produce two positions.
+    const advanced = await tx.race.updateMany({
+      where: { id: 1, currentPickIndex: pickIndex },
       data: done ? { currentPickIndex: nextIndex, status: "drafted" } : { currentPickIndex: nextIndex },
     });
+    if (advanced.count === 0) throw httpError("Pick already recorded — refresh", 409);
 
     return { pickIndex, symbol, playerId: expected, done };
   });

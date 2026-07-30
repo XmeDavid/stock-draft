@@ -50,12 +50,13 @@ export async function GET() {
     };
   }).sort((a, b) => b.currentValue - a.currentValue);
 
-  const snaps = await prisma.snapshot.findMany({ orderBy: { date: "asc" }, include: { player: true } });
+  // History series are keyed by player id: display names are not unique.
+  const snaps = await prisma.snapshot.findMany({ orderBy: { date: "asc" } });
   const byDate = new Map<string, Record<string, number | string>>();
   for (const s of snaps) {
     const d = s.date.toISOString().slice(0, 10);
     if (!byDate.has(d)) byDate.set(d, { date: d });
-    byDate.get(d)![s.player.name] = Number(s.totalValue);
+    byDate.get(d)![String(s.playerId)] = Number(s.totalValue);
   }
 
   return NextResponse.json({

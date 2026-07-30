@@ -4,7 +4,8 @@ import { signSession, SESSION_COOKIE } from "@/lib/session";
 const attempts = new Map<string, { count: number; ts: number }>();
 
 export async function POST(req: Request) {
-  const ip = req.headers.get("x-forwarded-for") ?? "local";
+  // Last hop only: earlier entries are client-supplied and trivially spoofed.
+  const ip = (req.headers.get("x-forwarded-for") ?? "local").split(",").pop()!.trim();
   const a = attempts.get(ip) ?? { count: 0, ts: Date.now() };
   if (Date.now() - a.ts > 15 * 60_000) { a.count = 0; a.ts = Date.now(); }
   if (a.count >= 10) return NextResponse.json({ error: "Too many attempts" }, { status: 429 });

@@ -3,7 +3,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Re
 
 export default function Chart({ history, players, startingCapital }: {
   history: Record<string, number | string>[];
-  players: { name: string; color: string }[];
+  players: { id: number; name: string; color: string }[];
   startingCapital: number;
 }) {
   if (history.length === 0) return null;
@@ -17,7 +17,7 @@ export default function Chart({ history, players, startingCapital }: {
           <Legend />
           <ReferenceLine y={startingCapital} strokeDasharray="4 4" />
           {players.map((p) => (
-            <Line key={p.name} type="monotone" dataKey={p.name} stroke={p.color} dot={false} strokeWidth={2} connectNulls />
+            <Line key={p.id} type="monotone" dataKey={String(p.id)} name={p.name} stroke={p.color} dot={false} strokeWidth={2} connectNulls />
           ))}
         </LineChart>
       </ResponsiveContainer>

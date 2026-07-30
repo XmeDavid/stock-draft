@@ -6,7 +6,11 @@ export type PriceAsset = {
 };
 export type PriceResult = { price: number } | { error: string };
 
-const UA = { headers: { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" } };
+// Built per request: the abort timer starts the moment the signal is created.
+const fetchOptions = (): RequestInit => ({
+  headers: { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" },
+  signal: AbortSignal.timeout(8000),
+});
 
 export function sourceKey(a: PriceAsset): string {
   return `${a.priceSource}:${a.sourceId}`;
@@ -17,7 +21,7 @@ async function yahooChartMeta(ticker: string): Promise<Record<string, unknown>> 
   // segment — keep it literal while escaping anything else unsafe.
   const path = encodeURIComponent(ticker).replace(/%3D/g, "=");
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${path}?interval=1d&range=1d`;
-  const res = await fetch(url, UA);
+  const res = await fetch(url, fetchOptions());
   if (!res.ok) throw new Error(`yahoo ${ticker}: HTTP ${res.status}`);
   const data = await res.json();
   return data?.chart?.result?.[0]?.meta ?? {};
@@ -75,7 +79,7 @@ async function fxRate(from: string, to: string): Promise<number> {
 async function coingeckoQuote(id: string, currency: string): Promise<number> {
   const cur = currency.toLowerCase();
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=${cur}`;
-  const res = await fetch(url, UA);
+  const res = await fetch(url, fetchOptions());
   if (!res.ok) throw new Error(`coingecko ${id}: HTTP ${res.status}`);
   const data = await res.json();
   const price = data?.[id]?.[cur];

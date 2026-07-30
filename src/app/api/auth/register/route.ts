@@ -7,6 +7,12 @@ import { PLAYER_COOKIE } from "@/lib/playerSession";
 
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,20}$/;
 
+// Visually distinct chart colours, handed out round-robin by join order.
+const PALETTE = [
+  "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+  "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080",
+];
+
 export async function POST(req: Request) {
   try {
     const race = await assertPhase("registration");
@@ -28,8 +34,9 @@ export async function POST(req: Request) {
     }
 
     const displayName = typeof name === "string" && name.trim() ? name.trim() : user;
+    const color = PALETTE[(await prisma.player.count()) % PALETTE.length];
     const player = await prisma.player.create({
-      data: { name: displayName, username: user, passwordHash: hashPassword(password) },
+      data: { name: displayName, username: user, passwordHash: hashPassword(password), color },
     });
 
     const res = NextResponse.json(

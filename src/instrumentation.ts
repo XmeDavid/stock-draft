@@ -12,8 +12,10 @@ export async function register() {
   }, { timezone: "UTC" });
 
   // Auto-start tick: flip a scheduled race to running once its time arrives.
-  // startRace() gates on status "drafted" inside a transaction, so a double
-  // fire (two instances, or overlapping ticks) just 409s on the loser.
+  // startRace() re-checks status "drafted", but that read happens *outside*
+  // its transaction, so concurrent ticks are not transactionally serialised —
+  // a double fire is mostly harmless (positions and snapshots are upserted to
+  // the same values) but is not guarded. Run a single web replica.
   cron.schedule("* * * * *", async () => {
     try {
       const race = await getRace();

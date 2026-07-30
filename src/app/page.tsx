@@ -24,10 +24,13 @@ export default function Home() {
 
   // Loads the draft state, and the standings too once the race is running
   // (a poll can see the phase flip to running, and the chart needs them).
+  // Both are fetched before either is committed, so a failed standings fetch
+  // never leaves the page showing `running` with no standings to render.
   const loadDraft = useCallback(async () => {
     const d = await getJson<DraftState>("/api/draft");
+    const s = d.status === "running" ? await getJson<Standings>("/api/standings") : null;
     setDraft(d);
-    if (d.status === "running") setStandings(await getJson<Standings>("/api/standings"));
+    if (s) setStandings(s);
     return d;
   }, []);
 
@@ -35,29 +38,28 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const d = await getJson<DraftState>("/api/draft");
-        if (cancelled) return;
-        setDraft(d);
-        if (d.status === "running") {
-          const s = await getJson<Standings>("/api/standings");
-          if (!cancelled) setStandings(s);
-        }
+        await loadDraft();
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadDraft]);
 
   // Poll while the draft is live so the board advances without a reload; keep
-  // polling once drafted so the auto-start flip to `running` is picked up.
+  // polling once drafted so the auto-start flip to `running` is picked up, and
+  // keep retrying if we somehow reached `running` without standings.
   useEffect(() => {
-    if (draft?.status !== "drafting" && draft?.status !== "drafted") return;
+    const needsPoll =
+      draft?.status === "drafting" ||
+      draft?.status === "drafted" ||
+      (draft?.status === "running" && !standings);
+    if (!needsPoll) return;
     const t = setInterval(() => {
       loadDraft().catch(() => {});
     }, 5000);
     return () => clearInterval(t);
-  }, [draft?.status, loadDraft]);
+  }, [draft?.status, standings, loadDraft]);
 
   const onPick = useCallback(
     async (symbol: string) => {

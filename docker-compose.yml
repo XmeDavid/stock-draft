@@ -7,7 +7,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      DATABASE_URL: postgresql://race:${POSTGRES_PASSWORD:-changeme}@db:5432/race
+      DATABASE_URL: postgresql://race:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/race
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       SNAPSHOT_HOUR: ${SNAPSHOT_HOUR:-18}
@@ -21,7 +21,7 @@ services:
     environment:
       POSTGRES_USER: race
       POSTGRES_DB: race
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - race-db:/var/lib/postgresql/data
     healthcheck:

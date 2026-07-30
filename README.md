@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Race to 1 Mil
 
-## Getting Started
+A friendly investment race for a group of friends. Everyone drafts a portfolio
+from a shared pool of tickers, the picks lock at the price they had when the
+race starts, and the site tracks who's winning with daily price snapshots.
 
-First, run the development server:
+## How it works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. **Registration** — the admin sets an invite code and shares it. Friends
+   self-register at `/register` (name, username, password, invite code). No
+   admin data entry: players own their accounts and log in at `/login`.
+2. **Draft** — the admin starts the draft, which closes registration and locks
+   a randomly shuffled pick order. It's a **snake draft**: 10 picks per player,
+   **$1,000 per pick** (a $10,000 starting portfolio each). Players take their
+   turns at `/` (the draft board shows whose turn it is); the admin can pick on
+   someone's behalf if needed.
+   Any ticker Yahoo Finance can resolve is allowed — equities, ETFs, and crypto
+   in Yahoo's `BTC-USD` / `ETH-USD` form. A ticker already drafted by anyone is
+   off the board.
+3. **Race** — after the last pick, the admin starts the race immediately or
+   schedules a start time. At start, every position's quantity is fixed at the
+   then-current price and the leaderboard/chart go live. Buy and hold: no
+   trading after the start.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Deploy on Dokploy
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Create a **Compose** application pointing at this repo (compose file:
+   `docker-compose.yml`).
+2. Set environment variables: `ADMIN_PASSWORD`, `SESSION_SECRET` (long random
+   string), `POSTGRES_PASSWORD`, optionally `SNAPSHOT_HOUR` (UTC hour, default
+   18).
+3. Assign a domain to the `web` service, port 3000.
+4. Deploy. Open `/admin`, log in, set the invite code and share it; friends
+   register at `/register`; when everyone's in, hit **Start draft**; after the
+   last pick, **Start race now** or schedule a start time.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The container runs `prisma migrate deploy` on boot, so a fresh database is set
+up automatically.
 
-## Learn More
+## Local dev
 
-To learn more about Next.js, take a look at the following resources:
+The compose `db` service deliberately publishes no host port (it is only
+reachable from `web`), so for local dev run a throwaway Postgres yourself:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+    docker run -d --name race-db -p 5432:5432 \
+      -e POSTGRES_USER=race -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=race \
+      postgres:16-alpine
+    cp .env.example .env   # DATABASE_URL=postgresql://race:dev@localhost:5432/race
+    npx prisma migrate dev
+    npm run dev
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Tests: `npm test`. Production build check: `npm run build`.
 
-## Deploy on Vercel
+## Notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Prices**: Yahoo Finance (equities, ETFs, and crypto such as `BTC-USD`) with
+  a CoinGecko path retained for assets configured with that source. Free, no
+  API keys. Non-USD quotes are converted to the race currency.
+- **Snapshots**: a daily snapshot runs at `SNAPSHOT_HOUR` UTC inside the web
+  container, plus one on boot, so a restart or a missed day is caught up. If a
+  price can't be fetched, the last known price is reused and the row is flagged
+  stale.
+- **Auto-start**: a minute-tick cron flips a scheduled race to running once its
+  start time arrives, so nobody has to be at a keyboard.
+- **Export**: the **Export .xlsx** button on the homepage (`/api/export`) —
+  standings, daily history, and every position.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string (set by compose) |
+| `ADMIN_PASSWORD` | Password for `/admin/login` |
+| `SESSION_SECRET` | Signing secret for admin and player sessions |
+| `SNAPSHOT_HOUR` | UTC hour for the daily snapshot (default `18`) |
+| `TZ` | Kept at `UTC` so cron hours are unambiguous |

@@ -1,6 +1,7 @@
 "use client";
 import AssetLogo from "@/components/AssetLogo";
 import StockPicker from "@/components/StockPicker";
+import { formatEuropeanDateTime } from "@/lib/dateFormat";
 
 export type DraftPlayer = { id: number; name: string; username: string; strategy: string; color: string };
 export type DraftPick = {
@@ -65,7 +66,7 @@ export default function DraftBoard({
           <span className="font-bold text-emerald-900 dark:text-emerald-100">✓ Draft complete — waiting for start</span>
           {draft.scheduledStartAt && (
             <span className="ml-2 text-gray-600 dark:text-gray-400">
-              scheduled for {new Date(draft.scheduledStartAt).toLocaleString()}
+              scheduled for {formatEuropeanDateTime(draft.scheduledStartAt)}
             </span>
           )}
         </div>

@@ -7,6 +7,11 @@ import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 import GameRules from "@/components/GameRules";
 import PickReveal from "@/components/PickReveal";
 import SeasonPanels from "@/components/SeasonPanels";
+import {
+  formatEuropeanDate,
+  formatEuropeanDateTime,
+  formatEuropeanTime,
+} from "@/lib/dateFormat";
 
 type Standings = {
   race: {
@@ -211,7 +216,7 @@ export default function Home() {
           <h1 className="text-2xl font-bold">{standings?.race.name ?? draft.raceName}</h1>
           <p className="text-sm text-gray-500">
             {inSeason && standings?.race.startedAt
-              ? `Started ${standings.race.startedAt.slice(0, 10)} · ${standings.race.startingCapital.toLocaleString()} ${standings.race.currency} each`
+              ? `Started ${formatEuropeanDate(standings.race.startedAt)} · ${standings.race.startingCapital.toLocaleString()} ${standings.race.currency} each`
               : draft.status === "registration"
                 ? "Race is forming"
                 : draft.status === "drafting"
@@ -314,7 +319,7 @@ export default function Home() {
         <section className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
           <div>
             <p className="font-bold text-emerald-900 dark:text-emerald-100">
-              Automatic start planned for {new Date(draft.scheduledStartAt).toLocaleString()}
+              Automatic start planned for {formatEuropeanDateTime(draft.scheduledStartAt)}
             </p>
             <p className="text-emerald-800/80 dark:text-emerald-200/70">
               The race starts once the draft and every MVP choice are complete.
@@ -337,12 +342,12 @@ export default function Home() {
               </p>
             </div>
             <div className="text-left sm:text-right">
-              {standings.race.endAt && <time className="block font-mono text-sm text-gray-300">Ends {new Date(standings.race.endAt).toLocaleString()}</time>}
+              {standings.race.endAt && <time className="block font-mono text-sm text-gray-300">Ends {formatEuropeanDateTime(standings.race.endAt)}</time>}
               {standings.race.status === "running" && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 sm:justify-end">
                   <span className="text-xs text-gray-400">
                     Quotes {standings.race.pricesAsOf
-                      ? `updated ${new Date(standings.race.pricesAsOf).toLocaleTimeString()}`
+                      ? `updated ${formatEuropeanTime(standings.race.pricesAsOf)}`
                       : "unavailable"}
                     {" · "}auto every {Math.round(standings.race.priceRefreshSeconds / 60)} min
                   </span>

@@ -1,5 +1,6 @@
 "use client";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { formatChartDate } from "@/lib/dateFormat";
 
 export default function Chart({ history, players, startingCapital }: {
   history: Record<string, number | string>[];
@@ -11,9 +12,12 @@ export default function Chart({ history, players, startingCapital }: {
     <div style={{ width: "100%", height: 360 }}>
       <ResponsiveContainer>
         <LineChart data={history}>
-          <XAxis dataKey="date" fontSize={12} />
+          <XAxis dataKey="date" fontSize={12} tickFormatter={formatChartDate} />
           <YAxis domain={["auto", "auto"]} fontSize={12} width={70} />
-          <Tooltip formatter={(v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+          <Tooltip
+            formatter={(v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            labelFormatter={formatChartDate}
+          />
           <Legend />
           <ReferenceLine y={startingCapital} strokeDasharray="4 4" />
           {players.map((p) => (

@@ -16,5 +16,7 @@ describe("buildWorkbook", () => {
     expect(wb.SheetNames).toEqual(["Leaderboard", "History", "Positions"]);
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["Leaderboard"]);
     expect(rows[0]).toMatchObject({ Player: "Ana", "Value (EUR)": 11000, "Gain %": 10 });
+    const history = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["History"]);
+    expect(history[0]).toMatchObject({ Date: "30/07/2026", Player: "Ana" });
   });
 });

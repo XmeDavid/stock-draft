@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
+import { formatEuropeanDateTime } from "@/lib/dateFormat";
 
 type Race = { name: string; currency: string; status: string; startedAt: string | null; endAt: string | null };
 type AdminRace = { inviteCode: string; picksPerPlayer: number };
@@ -153,7 +154,7 @@ export default function AdminConsole() {
           <h2 className="text-lg font-semibold">Set the race end</h2>
           <p className="text-sm">This draft predates the end-date setting. Choose the final market cutoff before starting the race.</p>
           <div className="flex flex-wrap gap-2">
-            <input className={input} type="datetime-local" required value={settings.endAt}
+            <input className={input} type="datetime-local" lang="en-GB" required value={settings.endAt}
               onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
             <button className={btn} disabled={busy} onClick={() => run(async () => {
               await api("/api/admin/race", {
@@ -222,19 +223,19 @@ export default function AdminConsole() {
                 </label>
                 <label className="space-y-1 text-sm font-medium">
                   <span>Automatic start <span className="font-normal text-gray-500">(optional)</span></span>
-                  <input className={`${input} w-full`} type="datetime-local" value={settings.startAt}
+                  <input className={`${input} w-full`} type="datetime-local" lang="en-GB" value={settings.startAt}
                     onChange={(e) => setSettings({ ...settings, startAt: e.target.value })} />
                 </label>
                 <label className="space-y-1 text-sm font-medium">
                   <span>Race ends</span>
-                  <input className={`${input} w-full`} type="datetime-local" required value={settings.endAt}
+                  <input className={`${input} w-full`} type="datetime-local" lang="en-GB" required value={settings.endAt}
                     onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
                 </label>
               </div>
               <button className={btn} disabled={busy}>Save settings</button>
             </form>
             <p className="text-xs text-gray-500">
-              Times use your local timezone. Auto-start waits until the draft and all MVP choices are complete.
+              Dates use DD/MM/YYYY and 24-hour time in your local timezone. Auto-start waits until the draft and all MVP choices are complete.
               Currency is a 3-letter code, e.g. EUR. Pick count locks when the draft starts.
             </p>
           </section>
@@ -337,7 +338,7 @@ export default function AdminConsole() {
             <h2 className="text-lg font-semibold">Start the race</h2>
             <p className="text-sm text-gray-600 dark:text-gray-300">
               {draft.scheduledStartAt
-                ? `Scheduled to start ${new Date(draft.scheduledStartAt).toLocaleString()}.`
+                ? `Scheduled to start ${formatEuropeanDateTime(draft.scheduledStartAt)}.`
                 : "No start scheduled."}
             </p>
             <p className="text-sm">
@@ -358,7 +359,7 @@ export default function AdminConsole() {
               Start race now — locks all picks at current prices
             </button>
             <div className="flex flex-wrap items-center gap-2">
-              <input type="datetime-local" className={input} value={settings.startAt}
+              <input type="datetime-local" lang="en-GB" className={input} value={settings.startAt}
                 onChange={(e) => setSettings({ ...settings, startAt: e.target.value })} />
               <button
                 className={btn}
@@ -387,7 +388,7 @@ export default function AdminConsole() {
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">{phase === "finished" ? "Race finished" : "Race running"}</h2>
           <p className="text-sm text-gray-700 dark:text-gray-300">
-            Race running since {race.startedAt ? new Date(race.startedAt).toLocaleString() : "—"}.
+            Race running since {race.startedAt ? formatEuropeanDateTime(race.startedAt) : "—"}.
           </p>
           {phase === "running" && (
             <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
@@ -397,6 +398,7 @@ export default function AdminConsole() {
                 <input
                   className={input}
                   type="datetime-local"
+                  lang="en-GB"
                   required
                   value={settings.endAt}
                   onChange={(e) => setSettings({ ...settings, endAt: e.target.value })}

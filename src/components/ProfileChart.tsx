@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatChartDate } from "@/lib/dateFormat";
 
 const colors = ["#6366f1", "#f59e0b", "#10b981", "#ec4899", "#06b6d4", "#8b5cf6", "#ef4444", "#84cc16", "#f97316"];
 
@@ -33,14 +34,17 @@ export default function ProfileChart({
       <div className="h-80 w-full">
         <ResponsiveContainer>
           <LineChart data={history} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-            <XAxis dataKey="date" fontSize={11} />
+            <XAxis dataKey="date" fontSize={11} tickFormatter={formatChartDate} />
             <YAxis
               width={58}
               fontSize={11}
               tickFormatter={(value) => `${Number(value).toFixed(2)}%`}
               domain={["auto", "auto"]}
             />
-            <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} />
+            <Tooltip
+              formatter={(value) => `${Number(value).toFixed(2)}%`}
+              labelFormatter={formatChartDate}
+            />
             <Legend />
             <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="4 4" />
             <Line type="monotone" dataKey="Total" stroke={playerColor} strokeWidth={4} dot={false} connectNulls />

@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { formatEuropeanDate } from "@/lib/dateFormat";
 
 export type ExportData = {
   currency: string;
@@ -17,7 +18,7 @@ export function buildWorkbook(data: ExportData): Buffer {
     }))), "Leaderboard");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
     data.history.map((h) => ({
-      Date: h.date, Player: h.playerName,
+      Date: formatEuropeanDate(h.date), Player: h.playerName,
       [`Value (${data.currency})`]: h.totalValue, Stale: h.stale ? "yes" : "",
     }))), "History");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(

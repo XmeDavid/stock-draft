@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Race {
+  id              Int       @id @default(1)
+  name            String    @default("Race to 1 Mil")
+  currency        String    @default("EUR")
+  startingCapital Decimal   @default(10000)
+  status          String    @default("setup") // setup | running
+  startedAt       DateTime?
+}
+
+model Player {
+  id        Int        @id @default(autoincrement())
+  name      String
+  strategy  String     @default("")
+  color     String     @default("#8884d8")
+  positions Position[]
+  snapshots Snapshot[]
+}
+
+model Asset {
+  id            Int        @id @default(autoincrement())
+  symbol        String     @unique // display symbol, e.g. "VWCE.DE", "BTC", "GOLD", "CASH"
+  name          String
+  type          String // equity | etf | gold | crypto | cash
+  priceSource   String // yahoo | coingecko | none
+  sourceId      String // yahoo ticker or coingecko id; "" for cash
+  quoteCurrency String     @default("EUR")
+  positions     Position[]
+}
+
+model Position {
+  id         Int      @id @default(autoincrement())
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId   Int
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId    Int
+  allocation Decimal // amount of starting capital, in race currency
+  quantity   Decimal? // null until race start
+  startPrice Decimal? // null until race start, in race currency
+
+  @@unique([playerId, assetId])
+}
+
+model Snapshot {
+  id         Int      @id @default(autoincrement())
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId   Int
+  date       DateTime @db.Date
+  totalValue Decimal
+  breakdown  Json // [{assetId, symbol, quantity, price, value}]
+  stale      Boolean  @default(false)
+
+  @@unique([playerId, date])
+}

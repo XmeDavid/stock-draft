@@ -42,7 +42,7 @@ describe("runSnapshot", () => {
   });
 
   it("skips when race is not running", async () => {
-    const db = makeDb("setup");
+    const db = makeDb("registration");
     const res = await runSnapshot({ db: db as never, fetchPrices: vi.fn() as never });
     expect(res).toHaveProperty("skipped");
   });

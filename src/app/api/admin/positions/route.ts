@@ -17,6 +17,12 @@ export async function PUT(req: Request) {
     const race = await assertSetup();
     const { playerId, positions } = await req.json() as
       { playerId: number; positions: { assetId: number; allocation: number }[] };
+    // Guard: an undefined playerId makes deleteMany's where a no-op filter,
+    // which would wipe every position in the table.
+    if (!Number.isInteger(playerId))
+      return NextResponse.json({ error: "playerId (integer) required" }, { status: 400 });
+    if (!Array.isArray(positions))
+      return NextResponse.json({ error: "positions must be an array" }, { status: 400 });
     const total = positions.reduce((s, p) => s + p.allocation, 0);
     if (total > Number(race.startingCapital) + 0.01)
       return NextResponse.json(

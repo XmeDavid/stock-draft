@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { assertSetup } from "@/lib/race";
+import { TYPES, SOURCES } from "@/lib/assets";
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     await assertSetup();
     const { id } = await params;
     const { symbol, name, type, priceSource, sourceId, quoteCurrency } = await req.json();
+    if (type !== undefined && !TYPES.includes(type))
+      return NextResponse.json({ error: `type must be one of ${TYPES.join(", ")}` }, { status: 400 });
+    if (priceSource !== undefined && !SOURCES.includes(priceSource))
+      return NextResponse.json({ error: `priceSource must be one of ${SOURCES.join(", ")}` }, { status: 400 });
     const asset = await prisma.asset.update({
       where: { id: Number(id) },
       data: { symbol, name, type, priceSource, sourceId, quoteCurrency },

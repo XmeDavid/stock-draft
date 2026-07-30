@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { assertSetup } from "@/lib/race";
 import { getPrice } from "@/lib/prices";
-
-const TYPES = ["equity", "etf", "gold", "crypto", "cash"];
-const SOURCES = ["yahoo", "coingecko", "none"];
+import { TYPES, SOURCES } from "@/lib/assets";
 
 export async function GET() {
   return NextResponse.json(await prisma.asset.findMany({ orderBy: { symbol: "asc" } }));

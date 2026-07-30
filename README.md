@@ -69,7 +69,7 @@ The easiest production-like local run is:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
 Then open `http://localhost:3000`. For native `npm run dev`, run PostgreSQL

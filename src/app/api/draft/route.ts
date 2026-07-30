@@ -34,7 +34,10 @@ export async function GET(req: NextRequest) {
       ? turnFor(order, race.currentPickIndex)
       : null;
 
-  const yourPlayerId = playerIdFromCookie(req.cookies.get(PLAYER_COOKIE)?.value);
+  const cookiePlayerId = playerIdFromCookie(req.cookies.get(PLAYER_COOKIE)?.value);
+  const yourPlayerId = cookiePlayerId !== null && playerRows.some((player) => player.id === cookiePlayerId)
+    ? cookiePlayerId
+    : null;
   const isAdmin = verifySession(
     req.cookies.get(SESSION_COOKIE)?.value,
     process.env.SESSION_SECRET ?? ""

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 import { formatEuropeanDateTime } from "@/lib/dateFormat";
+import { RESET_CONFIRMATION } from "@/lib/resetConfirmation";
 
 type Race = { name: string; currency: string; status: string; startedAt: string | null; endAt: string | null };
 type AdminRace = { inviteCode: string; picksPerPlayer: number };
@@ -31,6 +32,9 @@ export default function AdminConsole() {
   const [busy, setBusy] = useState(false);
   const [pickError, setPickError] = useState("");
   const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [resetArmed, setResetArmed] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
   // Seeded from the race once loaded, then left alone so a refresh mid-edit
   // (including the 5 s draft poll) can't overwrite what is being typed.
   const [settings, setSettings] = useState<RaceSettings | null>(null);
@@ -424,6 +428,101 @@ export default function AdminConsole() {
           <Link href="/" className="text-sm text-blue-600 underline">Open the public standings</Link>
         </section>
       )}
+
+      <details className="rounded-xl border border-red-200 bg-red-50/50 dark:border-red-950 dark:bg-red-950/10">
+        <summary className="cursor-pointer select-none p-4 text-sm font-semibold text-red-700 dark:text-red-400">
+          Danger zone
+        </summary>
+        <div className="space-y-4 border-t border-red-200 p-4 dark:border-red-950">
+          <div>
+            <h2 className="font-bold text-red-800 dark:text-red-300">Reset the entire game</h2>
+            <p className="mt-1 text-sm text-red-700 dark:text-red-400">
+              Permanently deletes the race, all players, picks, assets, standings, and history.
+              Deployment settings and the admin login remain unchanged. This cannot be undone.
+            </p>
+          </div>
+
+          {!resetArmed ? (
+            <button
+              type="button"
+              className="rounded border border-red-600 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-950"
+              disabled={busy}
+              onClick={() => {
+                if (!confirm("Open the permanent reset controls? No data is deleted at this step.")) return;
+                setResetArmed(true);
+              }}
+            >
+              Reveal reset controls
+            </button>
+          ) : (
+            <form
+              className="space-y-3 rounded-lg border border-red-300 bg-white p-4 dark:border-red-900 dark:bg-gray-950"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (resetConfirmation !== RESET_CONFIRMATION) return;
+                if (!confirm("FINAL WARNING: Permanently delete the entire game and every player?")) return;
+                run(async () => {
+                  await post("/api/admin/reset", {
+                    confirmation: resetConfirmation,
+                    password: resetPassword,
+                  });
+                  setSettings(null);
+                  setInviteCode(null);
+                  setResetArmed(false);
+                  setResetConfirmation("");
+                  setResetPassword("");
+                  return "The game was fully reset. You can now configure a new race.";
+                });
+              }}
+            >
+              <label className="block space-y-1 text-sm font-medium">
+                <span>Type <strong className="font-mono">{RESET_CONFIRMATION}</strong></span>
+                <input
+                  className={`${input} w-full font-mono`}
+                  value={resetConfirmation}
+                  onChange={(event) => setResetConfirmation(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="block space-y-1 text-sm font-medium">
+                <span>Re-enter the admin password</span>
+                <input
+                  className={`${input} w-full`}
+                  type="password"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  autoComplete="current-password"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className={danger}
+                  disabled={
+                    busy ||
+                    resetConfirmation !== RESET_CONFIRMATION ||
+                    resetPassword.length === 0
+                  }
+                >
+                  Permanently reset everything
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
+                  disabled={busy}
+                  onClick={() => {
+                    setResetArmed(false);
+                    setResetConfirmation("");
+                    setResetPassword("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </details>
     </main>
   );
 }

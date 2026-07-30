@@ -13,7 +13,16 @@ import { startRace } from "@/lib/startRace";
 export async function advanceRaceClock(now = new Date()) {
   let race = await getRace();
   if (race.status === "drafted" && race.scheduledStartAt && now >= race.scheduledStartAt) {
-    await startRace({ now });
+    try {
+      await startRace({ now });
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      // A scheduled start can arrive before every MVP is locked, or while a
+      // quote provider is temporarily unavailable. Keep the site usable and
+      // retry on the next request once the race is ready.
+      if (status === 409 || status === 502) return;
+      throw error;
+    }
     race = await getRace();
   }
   if (race.status !== "running") return;

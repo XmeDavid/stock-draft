@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function Register() {
   const [inviteCode, setInviteCode] = useState("");
@@ -32,6 +33,9 @@ export default function Register() {
   return (
     <main className="mx-auto mt-24 max-w-sm p-4">
       <h1 className="mb-4 text-xl font-bold">Join the race</h1>
+      <p className="mb-4 text-sm text-gray-500">
+        First time playing? <Link href="/#rules" className="font-semibold text-indigo-700 underline dark:text-indigo-300">Read the rules</Link>.
+      </p>
       <form onSubmit={submit} className="space-y-3">
         <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)}
           placeholder="Invite code" className="w-full rounded border p-2" autoFocus />
@@ -47,7 +51,7 @@ export default function Register() {
         </button>
       </form>
       <p className="mt-4 text-sm text-gray-500">
-        Already registered? <a href="/login" className="underline">Log in</a>
+        Already registered? <Link href="/login" className="underline">Log in</Link>
       </p>
     </main>
   );

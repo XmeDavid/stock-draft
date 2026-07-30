@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Chart from "@/components/Chart";
 import Leaderboard from "@/components/Leaderboard";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
+import GameRules from "@/components/GameRules";
 import PickReveal from "@/components/PickReveal";
 import SeasonPanels from "@/components/SeasonPanels";
 
@@ -38,6 +39,7 @@ export default function Home() {
   const [pickError, setPickError] = useState("");
   const [mvpError, setMvpError] = useState("");
   const [refreshingPrices, setRefreshingPrices] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [revealPick, setRevealPick] = useState<DraftState["picks"][number] | null>(null);
   const seenPickCount = useRef<number | null>(null);
 
@@ -73,6 +75,18 @@ export default function Home() {
     })();
     return () => { cancelled = true; };
   }, [loadDraft]);
+
+  useEffect(() => {
+    const syncRulesHash = () => {
+      if (window.location.hash === "#rules") setRulesOpen(true);
+    };
+    const timer = window.setTimeout(syncRulesHash, 0);
+    window.addEventListener("hashchange", syncRulesHash);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("hashchange", syncRulesHash);
+    };
+  }, []);
 
   useEffect(() => {
     const needsPoll =
@@ -176,6 +190,18 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
+          <button
+            type="button"
+            onClick={() => {
+              setRulesOpen(true);
+              window.requestAnimationFrame(() => {
+                document.getElementById("rules")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              });
+            }}
+            className="cursor-pointer rounded border px-3 py-2 font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            How to play
+          </button>
           {loggedIn ? (
             <>
               <span className="hidden text-gray-500 sm:inline">logged in as {me?.name ?? me?.username ?? "player"}</span>
@@ -191,6 +217,27 @@ export default function Home() {
           )}
         </div>
       </header>
+
+      <GameRules
+        currency={draft.currency}
+        picksPerPlayer={draft.picksPerPlayer}
+        perPickAmount={draft.perPickAmount}
+        open={rulesOpen}
+        onOpenChange={setRulesOpen}
+      />
+
+      {(draft.status === "registration" || draft.status === "drafting") && draft.scheduledStartAt && (
+        <section className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+          <div>
+            <p className="font-bold text-emerald-900 dark:text-emerald-100">
+              Automatic start planned for {new Date(draft.scheduledStartAt).toLocaleString()}
+            </p>
+            <p className="text-emerald-800/80 dark:text-emerald-200/70">
+              The race starts once the draft and every MVP choice are complete.
+            </p>
+          </div>
+        </section>
+      )}
 
       {inSeason && standings ? (
         <>

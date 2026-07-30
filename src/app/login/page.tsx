@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -41,7 +42,9 @@ export default function Login() {
         </button>
       </form>
       <p className="mt-4 text-sm text-gray-500">
-        Need an invite? <a href="/register" className="underline">Register</a>
+        Need an invite? <Link href="/register" className="underline">Register</Link>
+        {" · "}
+        <Link href="/#rules" className="underline">How to play</Link>
       </p>
     </main>
   );

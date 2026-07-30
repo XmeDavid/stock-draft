@@ -6,7 +6,7 @@ import { assertPhase } from "@/lib/race";
 
 export async function POST(req: Request) {
   try {
-    const raceState = await assertPhase("drafted");
+    const raceState = await assertPhase("registration", "drafting", "drafted");
     const { startAt } = await req.json() as { startAt?: unknown };
 
     let scheduledStartAt: Date | null = null;

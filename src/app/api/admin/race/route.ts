@@ -4,6 +4,17 @@ import { races } from "@db/schema";
 import { getDb } from "@/lib/db";
 import { getRace } from "@/lib/race";
 
+export async function GET() {
+  const race = await getRace();
+  return NextResponse.json({
+    name: race.name,
+    currency: race.currency,
+    inviteCode: race.inviteCode,
+    status: race.status,
+    endAt: race.endAt?.toISOString() ?? null,
+  });
+}
+
 export async function PUT(req: Request) {
   try {
     const current = await getRace();

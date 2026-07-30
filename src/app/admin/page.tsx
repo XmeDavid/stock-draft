@@ -5,6 +5,8 @@ import Link from "next/link";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 
 type Race = { name: string; currency: string; status: string; startedAt: string | null; endAt: string | null };
+type AdminRace = { inviteCode: string };
+type RaceSettings = { name: string; currency: string; endAt: string; startAt: string };
 
 function localDateTimeValue(iso: string | null): string {
   if (!iso) return `${new Date().getFullYear()}-12-31T23:59`;
@@ -21,11 +23,10 @@ export default function AdminConsole() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [pickError, setPickError] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
   // Seeded from the race once loaded, then left alone so a refresh mid-edit
   // (including the 5 s draft poll) can't overwrite what is being typed.
-  const [settings, setSettings] = useState<{ name: string; currency: string; endAt: string } | null>(null);
-  const [startAt, setStartAt] = useState("");
+  const [settings, setSettings] = useState<RaceSettings | null>(null);
 
   // Every request funnels through here so a 401 (expired/absent cookie) always
   // bounces to the login page and API `error` strings surface verbatim.
@@ -51,18 +52,21 @@ export default function AdminConsole() {
     [api]
   );
 
-  // `/api/draft` is the phase source of truth; `/api/standings` supplies the
-  // race name/currency/start date, which the draft payload doesn't carry.
+  // `/api/draft` is the phase source of truth; `/api/standings` supplies public
+  // race details, and the authenticated race endpoint supplies the invite code.
   const load = useCallback(() => Promise.all([
     api<DraftState>("/api/draft"),
     api<{ race: Race }>("/api/standings"),
-  ]).then(([d, s]) => {
+    api<AdminRace>("/api/admin/race"),
+  ]).then(([d, s, adminRace]) => {
     setDraft(d);
     setRace(s.race);
+    setInviteCode((prev) => prev ?? adminRace.inviteCode);
     setSettings((prev) => prev ?? {
       name: s.race.name,
       currency: s.race.currency,
       endAt: localDateTimeValue(s.race.endAt),
+      startAt: d.scheduledStartAt ? localDateTimeValue(d.scheduledStartAt) : "",
     });
   }), [api]);
 
@@ -118,7 +122,7 @@ export default function AdminConsole() {
   const btn = "rounded bg-gray-800 px-3 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50";
   const danger = "rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50";
 
-  if (!draft || !race || !settings) {
+  if (!draft || !race || !settings || inviteCode === null) {
     return <main className="p-8">{error ? `Failed to load: ${error}` : "Loading…"}</main>;
   }
 
@@ -173,20 +177,42 @@ export default function AdminConsole() {
                       endAt: new Date(settings.endAt).toISOString(),
                     }),
                   });
+                  await post("/api/admin/schedule", {
+                    startAt: settings.startAt ? new Date(settings.startAt).toISOString() : null,
+                  });
                   return "Race settings saved.";
                 });
               }}
             >
-              <input className={`${input} grow`} placeholder="Race name" required value={settings.name}
-                onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
-              <input className={`${input} w-24 uppercase`} placeholder="EUR" maxLength={3} required
-                value={settings.currency}
-                onChange={(e) => setSettings({ ...settings, currency: e.target.value })} />
-              <input className={input} type="datetime-local" required value={settings.endAt}
-                onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
+              <div className="grid w-full gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm font-medium">
+                  <span>Race name</span>
+                  <input className={`${input} w-full`} placeholder="Office Stock League" required value={settings.name}
+                    onChange={(e) => setSettings({ ...settings, name: e.target.value })} />
+                </label>
+                <label className="space-y-1 text-sm font-medium">
+                  <span>Currency</span>
+                  <input className={`${input} w-full uppercase`} placeholder="EUR" maxLength={3} required
+                    value={settings.currency}
+                    onChange={(e) => setSettings({ ...settings, currency: e.target.value })} />
+                </label>
+                <label className="space-y-1 text-sm font-medium">
+                  <span>Automatic start <span className="font-normal text-gray-500">(optional)</span></span>
+                  <input className={`${input} w-full`} type="datetime-local" value={settings.startAt}
+                    onChange={(e) => setSettings({ ...settings, startAt: e.target.value })} />
+                </label>
+                <label className="space-y-1 text-sm font-medium">
+                  <span>Race ends</span>
+                  <input className={`${input} w-full`} type="datetime-local" required value={settings.endAt}
+                    onChange={(e) => setSettings({ ...settings, endAt: e.target.value })} />
+                </label>
+              </div>
               <button className={btn} disabled={busy}>Save settings</button>
             </form>
-            <p className="text-xs text-gray-500">Currency is a 3-letter code, e.g. EUR.</p>
+            <p className="text-xs text-gray-500">
+              Times use your local timezone. Auto-start waits until the draft and all MVP choices are complete.
+              Currency is a 3-letter code, e.g. EUR.
+            </p>
           </section>
 
           <section className="space-y-3">
@@ -308,13 +334,13 @@ export default function AdminConsole() {
               Start race now — locks all picks at current prices
             </button>
             <div className="flex flex-wrap items-center gap-2">
-              <input type="datetime-local" className={input} value={startAt}
-                onChange={(e) => setStartAt(e.target.value)} />
+              <input type="datetime-local" className={input} value={settings.startAt}
+                onChange={(e) => setSettings({ ...settings, startAt: e.target.value })} />
               <button
                 className={btn}
-                disabled={busy || !startAt}
+                disabled={busy || !settings.startAt}
                 onClick={() => run(async () => {
-                  await post("/api/admin/schedule", { startAt: new Date(startAt).toISOString() });
+                  await post("/api/admin/schedule", { startAt: new Date(settings.startAt).toISOString() });
                   return "Start scheduled.";
                 })}
               >Schedule start</button>
@@ -323,7 +349,7 @@ export default function AdminConsole() {
                 disabled={busy || !draft.scheduledStartAt}
                 onClick={() => run(async () => {
                   await post("/api/admin/schedule", { startAt: null });
-                  setStartAt("");
+                  setSettings({ ...settings, startAt: "" });
                   return "Schedule cleared.";
                 })}
               >Clear schedule</button>

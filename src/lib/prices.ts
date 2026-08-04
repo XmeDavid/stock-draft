@@ -11,7 +11,7 @@ export type PriceResult = { price: number; previousClose?: number } | { error: s
 // Built per request: the abort timer starts the moment the signal is created.
 const requestHeaders = { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" };
 
-const fetchOptions = (): RequestInit => ({
+export const fetchOptions = (): RequestInit => ({
   headers: requestHeaders,
   signal: AbortSignal.timeout(8000),
 });

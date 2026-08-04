@@ -32,7 +32,7 @@ This repository is ready to deploy as a Dokploy **Docker Compose** service:
    POSTGRES_PASSWORD=use-a-long-url-safe-password
    ADMIN_PASSWORD=choose-an-admin-password
    SESSION_SECRET=generate-a-long-random-string
-   SNAPSHOT_HOUR=18
+   SNAPSHOT_HOURS=18
    ```
 
 4. In the Domains tab, attach a domain to the `web` service on port `3000`.
@@ -57,7 +57,7 @@ Dokploy documentation:
 | `DATABASE_URL` | PostgreSQL connection string; Compose constructs this automatically |
 | `ADMIN_PASSWORD` | Password for `/admin/login` |
 | `SESSION_SECRET` | Cookie-signing secret for admin and player sessions |
-| `SNAPSHOT_HOUR` | UTC hour for daily history, default `18` |
+| `SNAPSHOT_HOURS` | Comma-separated UTC hours for daily history snapshots, default `18`; the day's last run is canonical (`SNAPSHOT_HOUR` still accepted) |
 
 Use a URL-safe `POSTGRES_PASSWORD` because Compose places it in
 `DATABASE_URL`. A long value containing letters, numbers, `_`, and `-` works

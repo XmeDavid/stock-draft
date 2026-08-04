@@ -1,8 +1,9 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Chart from "@/components/Chart";
 import Leaderboard from "@/components/Leaderboard";
+import { PageSkeleton, SeasonSkeleton } from "@/components/Skeletons";
+import StandingsSection from "@/components/StandingsSection";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 import GameRules from "@/components/GameRules";
 import PickReveal from "@/components/PickReveal";
@@ -62,16 +63,14 @@ export default function Home() {
     setDraft(next);
   }, []);
 
-  // Both payloads are fetched before committing a running/finished phase, so
-  // the page never briefly renders a season without standings.
+  // The draft payload is committed immediately so the page shell paints fast;
+  // the season area shows skeletons until the slower standings fetch lands.
   const loadDraft = useCallback(async (refreshPrices = false) => {
     const nextDraft = await getJson<DraftState>("/api/draft");
-    const nextStandings =
-      nextDraft.status === "running" || nextDraft.status === "finished"
-        ? await getJson<Standings>(refreshPrices ? "/api/standings?refresh=1" : "/api/standings")
-        : null;
     acceptDraft(nextDraft);
-    if (nextStandings) setStandings(nextStandings);
+    if (nextDraft.status === "running" || nextDraft.status === "finished") {
+      setStandings(await getJson<Standings>(refreshPrices ? "/api/standings?refresh=1" : "/api/standings"));
+    }
     return nextDraft;
   }, [acceptDraft]);
 
@@ -200,13 +199,12 @@ export default function Home() {
   }
 
   if (error) return <main className="p-8">Failed to load: {error}</main>;
-  if (!draft) return <main className="p-8">Loading…</main>;
+  if (!draft) return <PageSkeleton />;
 
   const loggedIn = draft.yourPlayerId !== null;
   const me = loggedIn ? draft.roster.find((player) => player.id === draft.yourPlayerId) : undefined;
   const inSeason = draft.status === "running" || draft.status === "finished";
   const showInlineRules = !loggedIn && draft.status === "registration";
-  if (inSeason && !standings) return <main className="p-8">Loading…</main>;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
@@ -328,7 +326,9 @@ export default function Home() {
         </section>
       )}
 
-      {inSeason && standings ? (
+      {inSeason && !standings ? (
+        <SeasonSkeleton />
+      ) : inSeason && standings ? (
         <>
           <section className="grid gap-3 rounded-2xl bg-gray-900 p-5 text-white shadow-xl sm:grid-cols-[1fr_auto] sm:items-center">
             <div>
@@ -363,8 +363,13 @@ export default function Home() {
               )}
             </div>
           </section>
-          <Chart history={standings.history} players={standings.players} startingCapital={standings.race.startingCapital} />
-          <Leaderboard players={standings.players} currency={standings.race.currency} />
+          <StandingsSection
+            history={standings.history}
+            players={standings.players}
+            startingCapital={standings.race.startingCapital}
+            currency={standings.race.currency}
+            raceStatus={standings.race.status}
+          />
           <SeasonPanels weekly={standings.weekly} awards={standings.awards} />
         </>
       ) : draft.status === "registration" ? (

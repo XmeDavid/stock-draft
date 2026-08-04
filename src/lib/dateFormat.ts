@@ -40,6 +40,25 @@ export function formatEuropeanTime(value: string | number | Date): string {
   return timeFormatter.format(new Date(value));
 }
 
+const intradayTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const intradayDayTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+export function formatIntradayLabel(value: unknown, range: "1d" | "1w"): string {
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value ?? "");
+  return range === "1d" ? intradayTimeFormatter.format(date) : intradayDayTimeFormatter.format(date);
+}
+
 export function formatChartDate(value: unknown): string {
   if (value === "Live") return "Live";
   if (typeof value !== "string") return String(value ?? "");

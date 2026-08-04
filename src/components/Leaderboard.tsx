@@ -38,7 +38,11 @@ const clean = (n: number) => Math.abs(n) < 0.005 ? 0 : n;
 const fmt = (n: number, d = 2) => clean(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const signed = (n: number) => `${clean(n) >= 0 ? "+" : ""}${fmt(n)}%`;
 
-export default function Leaderboard({ players, currency }: { players: Player[]; currency: string }) {
+export default function Leaderboard({ players, currency, onOpenChange }: {
+  players: Player[];
+  currency: string;
+  onOpenChange?: (id: number | null) => void;
+}) {
   const [open, setOpen] = useState<number | null>(null);
   const [sort, setSort] = useState<{ key: "symbol" | "startPrice" | "currentPrice" | "value" | "todayGainPct" | "gainPct"; direction: 1 | -1 }>({
     key: "gainPct",
@@ -66,7 +70,11 @@ export default function Leaderboard({ players, currency }: { players: Player[]; 
       </div>
       {players.map((p, i) => (
         <div key={p.id} className="border-b border-gray-200 last:border-b-0 dark:border-gray-800">
-          <button className="grid w-full cursor-pointer grid-cols-[2.5rem_1fr_auto_auto] items-center gap-3 p-4 text-left transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/20" onClick={() => setOpen(open === p.id ? null : p.id)}>
+          <button className="grid w-full cursor-pointer grid-cols-[2.5rem_1fr_auto_auto] items-center gap-3 p-4 text-left transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/20" onClick={() => {
+            const next = open === p.id ? null : p.id;
+            setOpen(next);
+            onOpenChange?.(next);
+          }}>
             <span className="text-lg font-black">{i + 1}</span>
             <span className="flex min-w-0 items-center gap-3">
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: p.color }} />

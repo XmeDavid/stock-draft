@@ -6,5 +6,7 @@ export async function register() {
   ) {
     const { migrateDatabase } = await import("@/lib/migrate");
     await migrateDatabase();
+    const { startRaceClockTicker } = await import("@/lib/raceClock");
+    startRaceClockTicker();
   }
 }

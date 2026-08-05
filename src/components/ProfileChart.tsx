@@ -23,7 +23,7 @@ function PicksTooltip({
   payload?: { dataKey?: string | number; value?: number | string }[];
   label?: string;
   series: Series[];
-  activeKey: string;
+  activeKey: string | null;
 }) {
   if (!active || !payload?.length) return null;
   // The hit-area lines and gradient area duplicate series in the payload.
@@ -54,6 +54,7 @@ export default function ProfileChart({
   symbols: string[];
   playerColor: string;
 }) {
+  const [selected, setSelected] = useState<string | null>("Total");
   const [hovered, setHovered] = useState<string | null>(null);
   if (history.length === 0) return <p className="p-4 text-sm text-gray-500">History starts with the first daily snapshot.</p>;
 
@@ -61,8 +62,8 @@ export default function ProfileChart({
     { key: "Total", color: playerColor },
     ...symbols.map((symbol, index) => ({ key: symbol, color: palette[index % palette.length] })),
   ];
-  const activeKey = hovered ?? "Total";
-  const activeSeries = series.find((s) => s.key === activeKey) ?? series[0];
+  const activeKey = hovered ?? selected;
+  const activeSeries = series.find((s) => s.key === activeKey) ?? null;
 
   return (
     <section className="border-t border-gray-200 p-3 dark:border-gray-800">
@@ -103,19 +104,21 @@ export default function ProfileChart({
               cursor={{ stroke: "#9ca3af", strokeOpacity: 0.4, strokeDasharray: "3 3" }}
             />
             <ReferenceLine y={0} stroke="#9ca3af" strokeOpacity={0.35} strokeDasharray="4 4" />
-            <Area
-              type="monotone"
-              dataKey={activeSeries.key}
-              stroke="none"
-              fill={`url(#${gradientId(activeSeries.key)})`}
-              connectNulls
-              isAnimationActive={false}
-              activeDot={false}
-              tooltipType="none"
-            />
+            {activeSeries && (
+              <Area
+                type="monotone"
+                dataKey={activeSeries.key}
+                stroke="none"
+                fill={`url(#${gradientId(activeSeries.key)})`}
+                connectNulls
+                isAnimationActive={false}
+                activeDot={false}
+                tooltipType="none"
+              />
+            )}
             {series.map((s) => {
               const isActive = s.key === activeKey;
-              const dimmed = hovered !== null && !isActive;
+              const dimmed = activeKey !== null && !isActive;
               return (
                 <Line
                   key={`line-${s.key}`}
@@ -157,11 +160,13 @@ export default function ProfileChart({
             <button
               key={`chip-${s.key}`}
               type="button"
+              aria-pressed={isActive}
+              onClick={() => setSelected((current) => current === s.key ? null : s.key)}
               onMouseEnter={() => setHovered(s.key)}
               onMouseLeave={() => setHovered(null)}
               onFocus={() => setHovered(s.key)}
               onBlur={() => setHovered(null)}
-              className={`flex cursor-default items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-semibold transition ${
+              className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-semibold transition ${
                 isActive
                   ? "border-transparent text-gray-900 dark:text-white"
                   : "border-gray-200 text-gray-600 dark:border-gray-700 dark:text-gray-300"

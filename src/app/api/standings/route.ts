@@ -5,7 +5,7 @@ import { advanceRaceClock } from "@/lib/raceClock";
 import { getPrices, sourceKey, type PriceAsset, type PriceResult } from "@/lib/prices";
 import { percentGain, positionValue } from "@/lib/valuation";
 import { logoUrlForSymbol } from "@/lib/logos";
-import { withReturnBaseline } from "@/lib/profileHistory";
+import { withPortfolioBaseline, withReturnBaseline } from "@/lib/profileHistory";
 import {
   buildWeeklyMatchups,
   daysLed,
@@ -278,7 +278,11 @@ export async function GET(req: Request) {
       priceRefreshSeconds: 300,
     },
     players: enrichedPlayers,
-    history: [...byDate.values()],
+    history: withPortfolioBaseline(
+      [...byDate.values()],
+      enrichedPlayers.map((player) => String(player.id)),
+      capital
+    ),
     weekly: {
       matchups: weeklyMatchups,
       table: matchupTable,

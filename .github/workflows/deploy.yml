@@ -1,0 +1,86 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: stock-draft-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Trigger Dokploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify manual deploy branch
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/master'
+        run: |
+          echo "Manual production deploys must run from master, got '${GITHUB_REF}'."
+          exit 1
+
+      - name: Trigger deployment through relay
+        env:
+          DOKPLOY_RELAY_TOKEN: ${{ secrets.DOKPLOY_RELAY_TOKEN }}
+          DOKPLOY_RELAY_URL: https://actions.davidsbatista.com/deploy/stock-draft-26
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DOKPLOY_RELAY_TOKEN}" ]; then
+            echo "Missing required secret: DOKPLOY_RELAY_TOKEN"
+            exit 1
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "${GITHUB_REF}" \
+              --arg sha "${GITHUB_SHA}" \
+              --arg repository "${GITHUB_REPOSITORY}" \
+              '{
+                ref: $ref,
+                after: $sha,
+                head_commit: {
+                  id: $sha,
+                  message: ("GitHub Actions deploy " + $sha)
+                },
+                commits: [{
+                  id: $sha,
+                  message: ("GitHub Actions deploy " + $sha),
+                  modified: ["/"]
+                }],
+                repository: {
+                  name: ($repository | split("/") | last),
+                  full_name: $repository
+                }
+              }'
+          )"
+
+          response_file="$(mktemp)"
+          http_code="$(
+            curl --show-error --silent \
+              --output "${response_file}" \
+              --write-out "%{http_code}" \
+              --request POST "${DOKPLOY_RELAY_URL}" \
+              --header "X-Deploy-Token: ${DOKPLOY_RELAY_TOKEN}" \
+              --header "X-GitHub-Event: push" \
+              --header "X-GitHub-Delivery: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              --header "Content-Type: application/json" \
+              --data "${payload}"
+          )"
+
+          cat "${response_file}"
+          echo
+
+          case "${http_code}" in
+            2*) ;;
+            *)
+              echo "Dokploy relay returned HTTP ${http_code}"
+              exit 1
+              ;;
+          esac

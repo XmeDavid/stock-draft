@@ -5,6 +5,7 @@ import { advanceRaceClock } from "@/lib/raceClock";
 import { getPrices, sourceKey, type PriceAsset, type PriceResult } from "@/lib/prices";
 import { percentGain, positionValue } from "@/lib/valuation";
 import { logoUrlForSymbol } from "@/lib/logos";
+import { withReturnBaseline } from "@/lib/profileHistory";
 import {
   buildWeeklyMatchups,
   daysLed,
@@ -150,7 +151,7 @@ export async function GET(req: Request) {
     if ((leaderDays.get(player.id) ?? 0) >= 10) achievements.push("Front Runner");
     if (rankMovement >= 2) achievements.push("Big Climber");
     if (player.positions.some((position) => position.isMvp && position.gainPct >= 25)) achievements.push("Captain's Call");
-    const profileHistory = snapshots
+    let profileHistory = snapshots
       .filter((snapshot) => snapshot.playerId === player.id)
       .map((snapshot) => {
         const row: Record<string, number | string> = {
@@ -166,6 +167,10 @@ export async function GET(req: Request) {
         }
         return row;
       });
+    profileHistory = withReturnBaseline(
+      profileHistory,
+      ["Total", ...player.positions.map((position) => position.symbol)]
+    );
     if (race.status === "running") {
       const live: Record<string, number | string> = {
         date: "Live",

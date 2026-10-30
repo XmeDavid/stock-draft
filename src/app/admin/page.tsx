@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import CorporateActionsPanel from "@/components/CorporateActionsPanel";
 import DraftBoard, { type DraftState } from "@/components/DraftBoard";
 import { formatEuropeanDateTime } from "@/lib/dateFormat";
 import { RESET_CONFIRMATION } from "@/lib/resetConfirmation";
@@ -394,6 +395,8 @@ export default function AdminConsole() {
           <p className="text-sm text-gray-700 dark:text-gray-300">
             Race running since {race.startedAt ? formatEuropeanDateTime(race.startedAt) : "—"}.
           </p>
+          {phase === "running" && <CorporateActionsPanel />}
+
           {phase === "running" && (
             <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
               <h3 className="font-semibold">Race ending</h3>

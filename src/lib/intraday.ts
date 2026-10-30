@@ -1,4 +1,5 @@
-import { getPlayersWithPositions } from "@/lib/data";
+import { getPlayersWithPositions, getSnapshotsWithPlayers } from "@/lib/data";
+import { readLineageByPosition } from "@/lib/applyCorporateActions";
 import { fetchOptions, sourceKey, type PriceAsset } from "@/lib/prices";
 import { getRace } from "@/lib/race";
 import { positionValue } from "@/lib/valuation";
@@ -108,16 +109,36 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
     throw err;
   }
   const playerRows = await getPlayersWithPositions();
+  const [snapshotRows, lineage] = await Promise.all([
+    getSnapshotsWithPlayers().catch(() => []),
+    readLineageByPosition().catch(() => new Map<number, number[]>()),
+  ]);
+  const lastPriceByAsset = new Map<number, number>();
+  for (const row of snapshotRows) {
+    const breakdown = (row.snapshot.breakdown ?? []) as { assetId?: number; price?: number }[];
+    for (const item of breakdown) {
+      if (typeof item.assetId === "number" && typeof item.price === "number" && Number.isFinite(item.price)) {
+        lastPriceByAsset.set(item.assetId, item.price);
+      }
+    }
+  }
   const grid = buildGrid(Date.now(), range);
 
   // One fetch per unique asset plus one per foreign quote currency (FX pair).
+  // A dead ticker holds the last snapshot price, not the race-start price.
   const assetByKey = new Map<string, { asset: PriceAsset; fallbackPrice: number }>();
   for (const player of playerRows) {
     for (const position of player.positions) {
       const key = sourceKey(position.asset as PriceAsset);
-      if (!assetByKey.has(key)) {
-        assetByKey.set(key, { asset: position.asset as PriceAsset, fallbackPrice: position.startPrice ?? 0 });
-      }
+      if (assetByKey.has(key)) continue;
+      const previousIds = [...(lineage.get(position.id) ?? [])].reverse();
+      const known = [position.assetId, ...previousIds]
+        .map((assetId) => lastPriceByAsset.get(assetId))
+        .find((price) => price !== undefined);
+      assetByKey.set(key, {
+        asset: position.asset as PriceAsset,
+        fallbackPrice: known ?? position.startPrice ?? 0,
+      });
     }
   }
   const fxCurrencies = [...new Set(
@@ -160,7 +181,8 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
       if (!fx) throw new Error(`no FX series for ${asset.quoteCurrency}`);
       pricesByAsset.set(key, raw.map((price, index) => price / fx[index]));
     } catch {
-      // Hold the asset flat at its race-currency start price rather than dropping it.
+      // Hold the asset flat at the last known race-currency price rather than dropping it.
+      // `degraded` tells the chart this is not a live print.
       degraded = true;
       pricesByAsset.set(key, grid.map(() => fallbackPrice));
     }

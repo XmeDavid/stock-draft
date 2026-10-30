@@ -15,6 +15,10 @@ type Position = {
   gainPct: number;
   marketGainPct: number;
   isMvp: boolean;
+  pricingStatus?: "live" | "unpriced";
+  possibleCorporateAction?: boolean;
+  priceBasis?: "live" | "last-snapshot" | "start" | "cash";
+  hint?: string | null;
 };
 type Player = {
   id: number;
@@ -85,7 +89,16 @@ export default function Leaderboard({ players, currency, onOpenChange }: {
                 }`}>
                   {p.rankMovement > 0 ? `↑${p.rankMovement}` : p.rankMovement < 0 ? `↓${Math.abs(p.rankMovement)}` : "No rank change"}
                   {p.strategy ? ` · ${p.strategy}` : ""}
-                  {p.stale && <span className="ml-2 text-amber-500" title="Some prices unavailable — showing last known">⚠ stale</span>}
+                  {p.stale && (
+                    <span
+                      className="ml-2 text-amber-500"
+                      title={p.positions.some((position) => position.possibleCorporateAction)
+                        ? "A holding stopped pricing. The value is the last snapshot, not the starting price, until an admin records the corporate action."
+                        : "Some prices unavailable — showing last known"}
+                    >
+                      ⚠ {p.positions.some((position) => position.possibleCorporateAction) ? "corporate action" : "stale"}
+                    </span>
+                  )}
                 </span>
               </span>
             </span>
@@ -140,11 +153,20 @@ export default function Leaderboard({ players, currency, onOpenChange }: {
                             <span>
                               <strong className="font-mono">{pos.isMvp && <span className="mr-1 text-amber-500" title="MVP — profit and loss count 2×">★</span>}{pos.symbol}</strong>
                               <span className="block max-w-56 truncate text-xs text-gray-500">{pos.name}</span>
+                              {pos.possibleCorporateAction && (
+                                <span className="block max-w-56 text-xs font-semibold text-amber-600">
+                                  Possible corporate action
+                                  {pos.priceBasis === "last-snapshot" ? " — last snapshot" : pos.priceBasis === "start" ? " — no prior price" : ""}
+                                </span>
+                              )}
                             </span>
                           </span>
                         </td>
                         <td className="p-3 text-right font-mono">{fmt(pos.startPrice)}</td>
-                        <td className="p-3 text-right font-mono">{fmt(pos.currentPrice)}</td>
+                        <td className="p-3 text-right font-mono" title={pos.hint ?? undefined}>
+                          {fmt(pos.currentPrice)}
+                          {pos.pricingStatus === "unpriced" && <span className="text-amber-600"> *</span>}
+                        </td>
                         <td className="p-3 text-right font-mono">{fmt(pos.value)}</td>
                         <td className={`p-3 text-right font-mono ${pos.todayGainPct === null ? "text-gray-400" : clean(pos.todayGainPct) >= 0 ? "text-green-600" : "text-red-600"}`}>
                           {pos.todayGainPct === null ? "—" : signed(pos.todayGainPct)}

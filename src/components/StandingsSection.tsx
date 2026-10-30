@@ -69,7 +69,7 @@ export default function StandingsSection({ history, players, startingCapital, cu
           <div className="mb-2 flex items-center justify-end gap-1">
             {rangeError && <span className="mr-2 text-xs text-amber-500">Intraday data unavailable right now</span>}
             {intradayReady && intraday.degraded && (
-              <span className="mr-2 text-xs text-amber-500">Some prices unavailable — possible corporate action, holding the last known price</span>
+              <span className="mr-2 text-xs text-amber-500">Some prices unavailable — holding the last known price</span>
             )}
             {RANGE_LABELS.map(({ key, label }) => (
               <button

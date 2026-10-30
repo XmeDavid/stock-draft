@@ -24,13 +24,28 @@ type Alert = {
 
 type Kind = "split" | "stock" | "cash" | "rename";
 
+type Book = { positions: BookPosition[]; alerts: Alert[]; revision: number | null; logError: string | null };
+
 const input = "rounded border p-2 text-sm";
 const btn = "rounded bg-gray-800 px-3 py-2 text-sm text-white hover:bg-gray-700 disabled:opacity-50";
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function newRequestId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export default function CorporateActionsPanel() {
   const router = useRouter();
   const [positions, setPositions] = useState<BookPosition[] | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [revision, setRevision] = useState<number | null>(null);
+  const [logError, setLogError] = useState<string | null>(null);
+  const [effectiveDate, setEffectiveDate] = useState(today);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,7 +59,7 @@ export default function CorporateActionsPanel() {
   const [quoteCurrency, setQuoteCurrency] = useState("");
   const [edits, setEdits] = useState<Record<number, { quantity: string; startPrice: string }>>({});
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<Book> => {
     const [bookRes, standingsRes] = await Promise.all([
       fetch("/api/admin/corporate-actions", { cache: "no-store" }),
       fetch("/api/standings", { cache: "no-store" }),
@@ -53,7 +68,12 @@ export default function CorporateActionsPanel() {
       router.push("/admin/login");
       throw new Error("Unauthorized");
     }
-    const book = await bookRes.json() as { error?: string; positions?: BookPosition[] };
+    const book = await bookRes.json() as {
+      error?: string;
+      positions?: BookPosition[];
+      revision?: number | null;
+      logError?: string | null;
+    };
     if (!bookRes.ok) throw new Error(book.error ?? `HTTP ${bookRes.status}`);
     const standings = await standingsRes.json() as {
       players?: {
@@ -69,6 +89,8 @@ export default function CorporateActionsPanel() {
     };
     return {
       positions: book.positions ?? [],
+      revision: book.revision ?? null,
+      logError: book.logError ?? null,
       alerts: (standings.players ?? []).flatMap((player) =>
         player.positions
           .filter((position) => position.possibleCorporateAction)
@@ -83,25 +105,32 @@ export default function CorporateActionsPanel() {
     };
   }, [router]);
 
+  // Every load replaces the editable quantities, so Save can never resubmit
+  // numbers from before a split or conversion.
+  const applyBook = useCallback((book: Book) => {
+    setPositions(book.positions);
+    setEdits(Object.fromEntries(book.positions.map((position) => [
+      position.positionId,
+      { quantity: String(position.quantity), startPrice: String(position.startPrice) },
+    ])));
+    setAlerts(book.alerts);
+    setRevision(book.revision);
+    setLogError(book.logError);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void load().then((book) => {
-      if (cancelled) return;
-      setPositions(book.positions);
-      setEdits(Object.fromEntries(book.positions.map((position) => [
-        position.positionId,
-        { quantity: String(position.quantity), startPrice: String(position.startPrice) },
-      ])));
-      setAlerts(book.alerts);
+      if (!cancelled) applyBook(book);
     }).catch((loadError: Error) => {
       if (!cancelled && loadError.message !== "Unauthorized") setError(loadError.message);
     });
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, applyBook]);
 
-  async function submit(payload: unknown, confirmText?: string) {
+  async function submit(payload: Record<string, unknown>, confirmText?: string) {
     if (confirmText && !confirm(confirmText)) return;
     setBusy(true);
     setError("");
@@ -110,16 +139,26 @@ export default function CorporateActionsPanel() {
       const res = await fetch("/api/admin/corporate-actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, requestId: newRequestId() }),
       });
       if (res.status === 401) {
         router.push("/admin/login");
         return;
       }
       const body = await res.json().catch(() => null) as { error?: string; summary?: string } | null;
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (!res.ok) {
+        // A conflict means the book moved on; show the current numbers rather than the stale ones.
+        if (res.status === 409) applyBook(await load());
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
       setNotice(body?.summary ?? "Saved.");
-      await load();
+      try {
+        applyBook(await load());
+      } catch (reloadError) {
+        // Never leave pre-action quantities on screen behind a Save button.
+        setPositions(null);
+        throw new Error(`Saved, but the panel could not reload (${(reloadError as Error).message}). Refresh the page.`);
+      }
     } catch (submitError) {
       setError((submitError as Error).message);
     } finally {
@@ -136,21 +175,21 @@ export default function CorporateActionsPanel() {
     }
     if (kind === "split") {
       void submit(
-        { kind, symbol: ticker, ratio: Number(ratio) },
-        `Apply a ${ratio}-for-1 split to every ${ticker} position? Share count and cost basis both adjust, so the position value stays put.`,
+        { kind, symbol: ticker, ratio, effectiveDate },
+        `Apply a ${ratio} split (new shares per old share) to every ${ticker} position, effective ${effectiveDate}? Share count and cost basis both adjust, so the position value stays put. A split already applied for that date is refused.`,
       );
       return;
     }
     if (kind === "cash") {
       void submit(
-        { kind, symbol: ticker, cashPerShare: Number(cashPerShare) },
-        `Convert ${ticker} to cash at ${cashPerShare} per share? The position stops tracking the market.`,
+        { kind, symbol: ticker, cashPerShare: Number(cashPerShare), effectiveDate },
+        `Convert ${ticker} to cash at ${cashPerShare} per share, effective ${effectiveDate}? The position stops tracking the market.`,
       );
       return;
     }
     if (kind === "rename") {
       void submit(
-        { kind, symbol: ticker, toSymbol, name: acquirerName || undefined },
+        { kind, symbol: ticker, toSymbol, name: acquirerName || undefined, effectiveDate },
         `Rename ${ticker} to ${toSymbol.trim().toUpperCase()} with no share adjustment?`,
       );
       return;
@@ -160,11 +199,12 @@ export default function CorporateActionsPanel() {
         kind,
         symbol: ticker,
         acquirerSymbol,
-        ratio: Number(ratio),
+        ratio,
         acquirerName: acquirerName || undefined,
         quoteCurrency: quoteCurrency || undefined,
+        effectiveDate,
       },
-      `Convert ${ticker} into ${acquirerSymbol.trim().toUpperCase()} at ${ratio} share(s) per share? Original allocations stay the cost basis. If someone else already drafted the acquirer, both keep it.`,
+      `Convert ${ticker} into ${acquirerSymbol.trim().toUpperCase()} at ${ratio} share(s) per share, effective ${effectiveDate}? Original allocations stay the cost basis. If someone else already drafted the acquirer, both keep it; a player who already holds it keeps the converted pick as a separate position.`,
     );
   }
 
@@ -174,14 +214,20 @@ export default function CorporateActionsPanel() {
         <h2 className="text-lg font-semibold">Corporate actions</h2>
         <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">
           When a drafted ticker is acquired, renamed, delisted, or split, record it here.
-          A missing quote stays on the leaderboard at its last snapshot value and is marked
-          as a possible corporate action — it is not reset to the starting price. A split
+          A missing quote stays on the leaderboard at its last snapshot value, restated in the
+          current share count — it is not reset to the starting price. It is marked as a possible
+          corporate action only when Yahoo reports a delisting or another symbol, or a mapping exists. A split
           scales the share count so an MVP is not wiped by the lower post-split price.
           Stock and cash deals keep the original allocation as the cost basis. The
           no-duplicates rule applies only at draft time, so two players may both hold the acquirer.
         </p>
       </div>
 
+      {logError && (
+        <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+          The corporate-action log is unreadable, so every action is blocked until it is repaired by hand: {logError}
+        </p>
+      )}
       {error && <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-700">{notice}</p>}
 
@@ -222,10 +268,16 @@ export default function CorporateActionsPanel() {
           </label>
           {(kind === "split" || kind === "stock") && (
             <label className="space-y-1 text-sm">
-              <span className="block text-xs text-gray-500">{kind === "split" ? "New shares per old share" : "Acquirer shares per old share"}</span>
-              <input className={`${input} w-28 font-mono`} inputMode="decimal" value={ratio} onChange={(event) => setRatio(event.target.value)} required />
+              <span className="block text-xs text-gray-500">
+                {kind === "split" ? "New shares per old share (1:30 for a reverse split)" : "Acquirer shares per old share"}
+              </span>
+              <input className={`${input} w-28 font-mono`} value={ratio} onChange={(event) => setRatio(event.target.value)} required />
             </label>
           )}
+          <label className="space-y-1 text-sm">
+            <span className="block text-xs text-gray-500">{kind === "split" ? "Ex-date" : "Effective date"}</span>
+            <input className={input} type="date" value={effectiveDate} max={today()} onChange={(event) => setEffectiveDate(event.target.value)} required />
+          </label>
           {kind === "cash" && (
             <label className="space-y-1 text-sm">
               <span className="block text-xs text-gray-500">Cash per share</span>
@@ -327,6 +379,7 @@ export default function CorporateActionsPanel() {
                           positionId: position.positionId,
                           quantity: Number(edit.quantity),
                           startPrice: Number(edit.startPrice),
+                          ...(revision === null ? {} : { expectedRevision: revision }),
                         }, `Update ${position.playerName}'s ${position.symbol} position?`)}
                       >
                         Save

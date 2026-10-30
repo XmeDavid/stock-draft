@@ -14,7 +14,8 @@ type Position = {
   todayGainPct: number | null;
   gainPct: number;
   marketGainPct: number;
-  isMvp: boolean;
+  /** Absent from the public standings until every MVP is revealed. */
+  isMvp?: boolean;
   pricingStatus?: "live" | "unpriced";
   possibleCorporateAction?: boolean;
   priceBasis?: "live" | "last-snapshot" | "start" | "cash";
@@ -153,9 +154,9 @@ export default function Leaderboard({ players, currency, onOpenChange }: {
                             <span>
                               <strong className="font-mono">{pos.isMvp && <span className="mr-1 text-amber-500" title="MVP — profit and loss count 2×">★</span>}{pos.symbol}</strong>
                               <span className="block max-w-56 truncate text-xs text-gray-500">{pos.name}</span>
-                              {pos.possibleCorporateAction && (
+                              {pos.pricingStatus === "unpriced" && (
                                 <span className="block max-w-56 text-xs font-semibold text-amber-600">
-                                  Possible corporate action
+                                  {pos.possibleCorporateAction ? "Possible corporate action" : "Quote unavailable"}
                                   {pos.priceBasis === "last-snapshot" ? " — last snapshot" : pos.priceBasis === "start" ? " — no prior price" : ""}
                                 </span>
                               )}

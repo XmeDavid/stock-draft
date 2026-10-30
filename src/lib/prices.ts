@@ -1,4 +1,4 @@
-import { splitsFromChart, type YahooSplit } from "@/lib/corporateActions";
+import { splitsFromChart, tickerKey, type YahooSplit } from "@/lib/corporateActions";
 import { issuerKey } from "@/lib/issuer";
 
 export type PriceAsset = {
@@ -15,7 +15,15 @@ export type PriceSuccess = {
   /** Splits embedded in the quote response (usually only those inside the requested range). */
   splits?: YahooSplit[];
 };
-export type PriceResult = PriceSuccess | { error: string };
+/** `quotedSymbol` is set when Yahoo answered for a different instrument than requested. */
+export type PriceResult = PriceSuccess | { error: string; quotedSymbol?: string };
+
+/** Yahoo redirected the ticker to another instrument (often the acquirer). Not a price for the original. */
+export class QuotedSymbolMismatchError extends Error {
+  constructor(readonly requested: string, readonly quotedSymbol: string) {
+    super(`yahoo ${requested}: quote returned for ${quotedSymbol}`);
+  }
+}
 
 // Built per request: the abort timer starts the moment the signal is created.
 const requestHeaders = { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" };
@@ -86,6 +94,10 @@ async function yahooPricePoint(ticker: string): Promise<PriceSuccess> {
   const quotedSymbol = typeof meta.symbol === "string" && meta.symbol.trim()
     ? meta.symbol.trim().toUpperCase()
     : undefined;
+  // BRK.B vs BRK-B is the same listing; anything else is a successor, not this ticker's price.
+  if (quotedSymbol && tickerKey(quotedSymbol) !== tickerKey(ticker)) {
+    throw new QuotedSymbolMismatchError(ticker, quotedSymbol);
+  }
   const splits = splitsFromChart({ chart: { result: [result] } });
   return {
     price,
@@ -250,7 +262,10 @@ export async function getPrices(
     try {
       out.set(sourceKey(a), await getPricePoint(a, raceCurrency));
     } catch (e) {
-      out.set(sourceKey(a), { error: e instanceof Error ? e.message : String(e) });
+      out.set(sourceKey(a), {
+        error: e instanceof Error ? e.message : String(e),
+        ...(e instanceof QuotedSymbolMismatchError ? { quotedSymbol: e.quotedSymbol } : {}),
+      });
     }
   }
   return out;

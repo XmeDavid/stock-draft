@@ -80,7 +80,7 @@ describe("delisted ticker mid-race", () => {
     expect(positionValue(20, 50, 1000, true)).toBe(1000);
   });
 
-  it("flags a start-price placeholder when the ticker dies before any snapshot exists", () => {
+  it("holds a start-price placeholder when the quote fails before any snapshot exists", () => {
     const quote = resolvePositionQuote({
       live: { error: "yahoo ACME: timeout" },
       lastSnapshotPrice: null,
@@ -88,7 +88,8 @@ describe("delisted ticker mid-race", () => {
       priceSource: "yahoo",
     });
     expect(quote.pricingStatus).toBe("unpriced");
-    expect(quote.possibleCorporateAction).toBe(true);
+    // A timeout is an outage, not evidence of a deal.
+    expect(quote.possibleCorporateAction).toBe(false);
     expect(quote.priceBasis).toBe("start");
     expect(quote.price).toBe(50);
     expect(unpricedHint("ACME", [])).toMatch(/last known value/i);
@@ -231,8 +232,8 @@ describe("acquirer already held by another player", () => {
     expect(findBreakdownRow([oldRow], historicalAssetIds(9, [5]))).toBe(oldRow);
   });
 
-  it("refuses to fold two of one player's picks into a single listing", () => {
-    const target = holding({ positionId: 1, playerId: 10, playerName: "Ada" });
+  it("keeps a converted pick separate when its player already holds the acquirer", () => {
+    const target = holding({ positionId: 1, playerId: 10, playerName: "Ada", isMvp: true });
     const already = holding({
       positionId: 2,
       playerId: 10,
@@ -242,11 +243,46 @@ describe("acquirer already held by another player", () => {
       name: "Buyer Inc",
       sourceId: "BUYER",
     });
-    expect(() => planStockConversion(
-      [target, already],
+    const other = holding({ positionId: 3, playerId: 11, playerName: "Grace" });
+    const plan = planStockConversion(
+      [target, already, other],
       [listing(), listing({ id: 9, symbol: "BUYER", name: "Buyer Inc", sourceId: "BUYER" })],
+      { symbol: "ACME", acquirerSymbol: "BUYER", ratio: 0.5, now },
+    );
+
+    expect(plan.assetPatch).toBeNull();
+    const ada = plan.positionPatches.find((patch) => patch.positionId === 1)!;
+    expect(ada).toMatchObject({ quantity: 5, startPrice: 200, previousAssetId: 5 });
+    expect(ada.successorAsset).toEqual({
+      symbol: "BUYER~ACME",
+      name: "Buyer Inc",
+      type: "equity",
+      priceSource: "yahoo",
+      sourceId: "BUYER",
+      quoteCurrency: "USD",
+    });
+    // Grace does not hold BUYER, so she moves onto the shared listing as before.
+    expect(plan.positionPatches.find((patch) => patch.positionId === 3)).toMatchObject({ assetId: 9 });
+    expect(plan.positionPatches.find((patch) => patch.positionId === 3)?.successorAsset).toBeUndefined();
+    expect(plan.positionPatches.some((patch) => patch.positionId === 2)).toBe(false);
+    expect(plan.summary).toMatch(/BUYER~ACME/);
+  });
+
+  it("reuses an existing successor listing instead of creating a second one", () => {
+    const plan = planStockConversion(
+      [
+        holding({ positionId: 1, playerId: 10 }),
+        holding({ positionId: 2, playerId: 10, assetId: 9, symbol: "BUYER", sourceId: "BUYER" }),
+      ],
+      [
+        listing(),
+        listing({ id: 9, symbol: "BUYER", sourceId: "BUYER" }),
+        listing({ id: 12, symbol: "BUYER~ACME", sourceId: "BUYER" }),
+      ],
       { symbol: "ACME", acquirerSymbol: "BUYER", ratio: 1, now },
-    )).toThrow(/already holds BUYER/);
+    );
+    expect(plan.positionPatches[0]).toMatchObject({ positionId: 1, assetId: 12 });
+    expect(plan.positionPatches[0].successorAsset).toBeUndefined();
   });
 });
 

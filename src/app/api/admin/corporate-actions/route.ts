@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { mergerMappings } from "@/lib/mergerMap";
+import { AlreadyAppliedError, CorporateActionError, parseEffectiveDate } from "@/lib/corporateActions";
 import {
   executeCorporateAction,
   listCorporateActionBook,
@@ -36,20 +37,50 @@ function optionalText(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+/** A number, or "new:old" / "new/old" so a 1-for-30 reverse split can be typed exactly as "1:30". */
+function readRatio(value: unknown, label: string): number {
+  if (typeof value === "string") {
+    const match = /^\s*([0-9]*\.?[0-9]+)\s*[:/]\s*([0-9]*\.?[0-9]+)\s*$/.exec(value);
+    if (match) return readPositive(Number(match[1]) / Number(match[2]), label);
+  }
+  return readPositive(value, label);
+}
+
+function optionalEffectiveAt(value: unknown): number | undefined {
+  const text = optionalText(value);
+  if (text === undefined) return undefined;
+  try {
+    return parseEffectiveDate(text);
+  } catch (error) {
+    throw httpError((error as Error).message, 400);
+  }
+}
+
+function optionalRequestId(value: unknown): string | undefined {
+  const text = optionalText(value);
+  if (text !== undefined && text.length > 100) throw httpError("requestId is too long", 400);
+  return text;
+}
+
 function parseAction(body: unknown): AdminCorporateAction {
   if (!body || typeof body !== "object") throw httpError("Expected a corporate action", 400);
   const kind = (body as { kind?: unknown }).kind;
   const record = body as Record<string, unknown>;
+  const meta = {
+    requestId: optionalRequestId(record.requestId),
+    effectiveAt: optionalEffectiveAt(record.effectiveDate),
+  };
   switch (kind) {
     case "sync":
       return { kind: "sync" };
     case "split":
-      return { kind: "split", symbol: readSymbol(record.symbol, "symbol"), ratio: readPositive(record.ratio, "ratio") };
+      return { kind: "split", symbol: readSymbol(record.symbol, "symbol"), ratio: readRatio(record.ratio, "ratio"), ...meta };
     case "cash":
       return {
         kind: "cash",
         symbol: readSymbol(record.symbol, "symbol"),
         cashPerShare: readPositive(record.cashPerShare, "cashPerShare"),
+        ...meta,
       };
     case "rename":
       return {
@@ -57,6 +88,7 @@ function parseAction(body: unknown): AdminCorporateAction {
         symbol: readSymbol(record.symbol, "symbol"),
         toSymbol: readSymbol(record.toSymbol, "toSymbol"),
         name: optionalText(record.name),
+        ...meta,
       };
     case "stock": {
       const quoteCurrency = optionalText(record.quoteCurrency)?.toUpperCase();
@@ -67,9 +99,10 @@ function parseAction(body: unknown): AdminCorporateAction {
         kind: "stock",
         symbol: readSymbol(record.symbol, "symbol"),
         acquirerSymbol: readSymbol(record.acquirerSymbol, "acquirerSymbol"),
-        ratio: readPositive(record.ratio, "ratio"),
+        ratio: readRatio(record.ratio, "ratio"),
         acquirerName: optionalText(record.acquirerName),
         quoteCurrency,
+        ...meta,
       };
     }
     case "edit": {
@@ -77,12 +110,18 @@ function parseAction(body: unknown): AdminCorporateAction {
       if (typeof positionId !== "number" || !Number.isInteger(positionId) || positionId <= 0) {
         throw httpError("positionId must be a positive integer", 400);
       }
+      const expectedRevision = record.expectedRevision;
+      if (expectedRevision !== undefined && (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision))) {
+        throw httpError("expectedRevision must be an integer", 400);
+      }
       return {
         kind: "edit",
         positionId,
         quantity: optionalPositive(record.quantity, "quantity"),
         startPrice: optionalPositive(record.startPrice, "startPrice"),
         allocation: optionalPositive(record.allocation, "allocation"),
+        requestId: meta.requestId,
+        expectedRevision,
       };
     }
     default:
@@ -104,9 +143,13 @@ export async function POST(req: Request) {
   try {
     const action = parseAction(await req.json().catch(() => null));
     const result = await executeCorporateAction(action);
-    return NextResponse.json({ ok: true, ...result });
+    // The fresh book comes back with the summary so the panel can never keep editing stale quantities.
+    // A failed reload must not report the committed action as failed; the panel reloads instead.
+    const book = await listCorporateActionBook().catch(() => null);
+    return NextResponse.json({ ok: true, ...result, book });
   } catch (error) {
-    const status = (error as { status?: number }).status ?? 500;
+    const status = (error as { status?: number }).status
+      ?? (error instanceof AlreadyAppliedError ? 409 : error instanceof CorporateActionError ? 400 : 500);
     return NextResponse.json({ error: (error as Error).message }, { status });
   }
 }

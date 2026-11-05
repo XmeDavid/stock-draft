@@ -6,7 +6,7 @@ import { getRace } from "@/lib/race";
 import { advanceRaceClock } from "@/lib/raceClock";
 import { turnFor } from "@/lib/draftOrder";
 import { PLAYER_COOKIE, playerIdFromCookie } from "@/lib/playerSession";
-import { SESSION_COOKIE, verifySession } from "@/lib/session";
+import { isAdminRequest, mvpRevealed } from "@/lib/mvpReveal";
 import { logoUrlForSymbol } from "@/lib/logos";
 
 export const dynamic = "force-dynamic";
@@ -38,10 +38,7 @@ export async function GET(req: NextRequest) {
   const yourPlayerId = cookiePlayerId !== null && playerRows.some((player) => player.id === cookiePlayerId)
     ? cookiePlayerId
     : null;
-  const isAdmin = verifySession(
-    req.cookies.get(SESSION_COOKIE)?.value,
-    process.env.SESSION_SECRET ?? ""
-  );
+  const isAdmin = isAdminRequest(req);
 
   const positionRows = await db
     .select({ position: positions, asset: assets })
@@ -50,7 +47,7 @@ export async function GET(req: NextRequest) {
     .where(isNotNull(positions.pickIndex))
     .orderBy(asc(positions.pickIndex));
   const mvpPositions = positionRows.filter((row) => row.position.isMvp);
-  const mvpRevealed = playerRows.length > 0 && mvpPositions.length === playerRows.length;
+  const revealed = mvpRevealed(playerRows.length, positionRows.map((row) => row.position));
   const yourMvp = mvpPositions.find((row) => row.position.playerId === yourPlayerId);
 
   return NextResponse.json({
@@ -69,7 +66,7 @@ export async function GET(req: NextRequest) {
     endAt: race.endAt?.toISOString() ?? null,
     mvpLockedCount: mvpPositions.length,
     mvpPlayerIds: isAdmin ? mvpPositions.map((row) => row.position.playerId) : [],
-    mvpRevealed,
+    mvpRevealed: revealed,
     yourMvpSymbol: yourMvp?.asset.symbol ?? null,
     picks: positionRows.map(({ position, asset }) => ({
       pickIndex: position.pickIndex as number,
@@ -78,7 +75,7 @@ export async function GET(req: NextRequest) {
       name: asset.name,
       type: asset.type,
       logoUrl: logoUrlForSymbol(asset.symbol),
-      isMvp: mvpRevealed ? position.isMvp : position.playerId === yourPlayerId && position.isMvp,
+      isMvp: revealed ? position.isMvp : position.playerId === yourPlayerId && position.isMvp,
     })),
   });
 }

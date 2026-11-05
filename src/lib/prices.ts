@@ -1,3 +1,4 @@
+import { splitsFromChart, type YahooSplit } from "@/lib/corporateActions";
 import { issuerKey } from "@/lib/issuer";
 
 export type PriceAsset = {
@@ -6,7 +7,15 @@ export type PriceAsset = {
   quoteCurrency: string;
   type: string;
 };
-export type PriceResult = { price: number; previousClose?: number } | { error: string };
+export type PriceSuccess = {
+  price: number;
+  previousClose?: number;
+  /** Set when Yahoo's meta names the instrument. Compared with the drafted ticker. */
+  quotedSymbol?: string;
+  /** Splits embedded in the quote response (usually only those inside the requested range). */
+  splits?: YahooSplit[];
+};
+export type PriceResult = PriceSuccess | { error: string };
 
 // Built per request: the abort timer starts the moment the signal is created.
 const requestHeaders = { "User-Agent": "Mozilla/5.0 (race-to-1-mil)" };
@@ -20,15 +29,41 @@ export function sourceKey(a: PriceAsset): string {
   return `${a.priceSource}:${a.sourceId}`;
 }
 
-async function yahooChartMeta(ticker: string): Promise<Record<string, unknown>> {
+type YahooChartResult = {
+  meta?: Record<string, unknown>;
+  events?: { splits?: Record<string, unknown> };
+};
+
+function yahooChartPath(ticker: string): string {
   // Tickers contain "=" ("GC=F", "EURUSD=X"), which is legal in a URL path
   // segment — keep it literal while escaping anything else unsafe.
-  const path = encodeURIComponent(ticker).replace(/%3D/g, "=");
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${path}?interval=1d&range=1d`;
+  return encodeURIComponent(ticker).replace(/%3D/g, "=");
+}
+
+async function readYahooError(res: Response): Promise<string> {
+  if (typeof res.json !== "function") return "";
+  const body = await res.json().catch(() => null) as { chart?: { error?: { description?: unknown } } } | null;
+  const description = body?.chart?.error?.description;
+  return typeof description === "string" && description ? `: ${description}` : "";
+}
+
+async function yahooChart(ticker: string, query: string): Promise<YahooChartResult> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooChartPath(ticker)}?${query}`;
   const res = await fetch(url, fetchOptions());
-  if (!res.ok) throw new Error(`yahoo ${ticker}: HTTP ${res.status}`);
-  const data = await res.json() as { chart?: { result?: Array<{ meta?: Record<string, unknown> }> } };
-  return data?.chart?.result?.[0]?.meta ?? {};
+  if (!res.ok) throw new Error(`yahoo ${ticker}: HTTP ${res.status}${await readYahooError(res)}`);
+  const data = await res.json() as { chart?: { result?: YahooChartResult[] } };
+  return data?.chart?.result?.[0] ?? {};
+}
+
+async function yahooChartMeta(ticker: string): Promise<Record<string, unknown>> {
+  const result = await yahooChart(ticker, "interval=1d&range=1d&events=split");
+  return result.meta ?? {};
+}
+
+/** Split history since the race can outlive a 1-day quote window. Used by the daily sync. */
+export async function fetchYahooSplitEvents(ticker: string): Promise<YahooSplit[]> {
+  const result = await yahooChart(ticker, "interval=1d&range=5y&events=split");
+  return splitsFromChart({ chart: { result: [result] } });
 }
 
 async function yahooQuote(ticker: string): Promise<number> {
@@ -38,8 +73,9 @@ async function yahooQuote(ticker: string): Promise<number> {
   return price;
 }
 
-async function yahooPricePoint(ticker: string): Promise<{ price: number; previousClose?: number }> {
-  const meta = await yahooChartMeta(ticker);
+async function yahooPricePoint(ticker: string): Promise<PriceSuccess> {
+  const result = await yahooChart(ticker, "interval=1d&range=1d&events=split");
+  const meta = result.meta ?? {};
   const price = meta.regularMarketPrice;
   if (typeof price !== "number") throw new Error(`yahoo ${ticker}: no price in response`);
   const previous = typeof meta.chartPreviousClose === "number"
@@ -47,7 +83,16 @@ async function yahooPricePoint(ticker: string): Promise<{ price: number; previou
     : typeof meta.previousClose === "number"
       ? meta.previousClose
       : undefined;
-  return previous === undefined ? { price } : { price, previousClose: previous };
+  const quotedSymbol = typeof meta.symbol === "string" && meta.symbol.trim()
+    ? meta.symbol.trim().toUpperCase()
+    : undefined;
+  const splits = splitsFromChart({ chart: { result: [result] } });
+  return {
+    price,
+    ...(previous === undefined ? {} : { previousClose: previous }),
+    ...(quotedSymbol ? { quotedSymbol } : {}),
+    ...(splits.length > 0 ? { splits } : {}),
+  };
 }
 
 export type ResolvedTicker = {
@@ -190,6 +235,8 @@ async function getPricePoint(
   return {
     price: raw.price * rate,
     ...(raw.previousClose === undefined ? {} : { previousClose: raw.previousClose * rate }),
+    ...(raw.quotedSymbol ? { quotedSymbol: raw.quotedSymbol } : {}),
+    ...(raw.splits ? { splits: raw.splits } : {}),
   };
 }
 

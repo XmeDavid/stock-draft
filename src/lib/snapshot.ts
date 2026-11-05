@@ -4,7 +4,9 @@ import { getDb } from "@/lib/db";
 import { getPlayersWithPositions } from "@/lib/data";
 import { getRace } from "@/lib/race";
 import { getPrices, sourceKey, type PriceAsset } from "@/lib/prices";
-import { portfolioValue, positionValue } from "@/lib/valuation";
+import { portfolioValue } from "@/lib/valuation";
+import { buildSnapshotRow, historicalAssetIds } from "@/lib/corporateActions";
+import { applySplitsFromQuotes, readActionLog, reconcileBeforeSnapshot } from "@/lib/applyCorporateActions";
 
 type BreakdownRow = {
   assetId: number;
@@ -14,6 +16,9 @@ type BreakdownRow = {
   value: number;
   allocation?: number;
   isMvp?: boolean;
+  pricingStatus?: "live" | "unpriced";
+  possibleCorporateAction?: boolean;
+  priceBasis?: string;
 };
 
 export async function runSnapshot(
@@ -22,11 +27,23 @@ export async function runSnapshot(
   const race = await getRace();
   if (race.status !== "running") return { skipped: `race status is ${race.status}` };
 
-  const playerRows = await getPlayersWithPositions();
+  try {
+    await reconcileBeforeSnapshot();
+  } catch (error) {
+    console.error("corporate action sync failed", error);
+  }
+
+  let playerRows = await getPlayersWithPositions();
   const priceAssets = playerRows.flatMap((player) =>
     player.positions.map((position) => position.asset as PriceAsset)
   );
   const prices = await fetchPrices(priceAssets, race.currency);
+  try {
+    if (await applySplitsFromQuotes(prices)) playerRows = await getPlayersWithPositions();
+  } catch (error) {
+    console.error("split apply failed", error);
+  }
+  const lineage = (await readActionLog().catch(() => null))?.lineageByPosition ?? {};
   const day = new Date(now.toISOString().slice(0, 10));
   const db = getDb();
 
@@ -36,23 +53,22 @@ export async function runSnapshot(
     let stale = false;
     for (const position of player.positions) {
       const result = prices.get(sourceKey(position.asset as PriceAsset));
-      let price: number;
-      if (result && "price" in result) {
-        price = result.price;
-      } else {
-        stale = true;
-        price = (await lastKnownPrice(player.id, position.assetId)) ?? position.startPrice ?? 0;
-      }
-      const quantity = position.quantity ?? 0;
-      rows.push({
+      const assetIds = historicalAssetIds(position.assetId, lineage[String(position.id)]);
+      const lastPrice = await lastKnownPrice(player.id, assetIds);
+      const row = buildSnapshotRow({
         assetId: position.assetId,
         symbol: position.asset.symbol,
-        quantity,
-        price,
+        quantity: position.quantity ?? 0,
         allocation: position.allocation,
         isMvp: position.isMvp,
-        value: positionValue(quantity, price, position.allocation, position.isMvp),
+        startPrice: position.startPrice ?? 0,
+        priceSource: position.asset.priceSource,
+        type: position.asset.type,
+        live: result,
+        lastSnapshotPrice: lastPrice,
       });
+      if (row.possibleCorporateAction) stale = true;
+      rows.push(row);
     }
     anyStale ||= stale;
     const totalValue = portfolioValue(rows);
@@ -71,7 +87,7 @@ export async function runSnapshot(
   return { recorded: playerRows.length, stale: anyStale };
 }
 
-async function lastKnownPrice(playerId: number, assetId: number): Promise<number | null> {
+async function lastKnownPrice(playerId: number, assetIds: number[]): Promise<number | null> {
   const [snapshot] = await getDb()
     .select({ breakdown: snapshots.breakdown })
     .from(snapshots)
@@ -79,5 +95,7 @@ async function lastKnownPrice(playerId: number, assetId: number): Promise<number
     .orderBy(desc(snapshots.date))
     .limit(1);
   const rows = (snapshot?.breakdown ?? []) as BreakdownRow[];
-  return rows.find((row) => row.assetId === assetId)?.price ?? null;
+  const ids = new Set(assetIds);
+  const price = rows.find((row) => ids.has(row.assetId))?.price;
+  return typeof price === "number" && Number.isFinite(price) ? price : null;
 }

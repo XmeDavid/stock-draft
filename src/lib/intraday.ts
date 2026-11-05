@@ -1,5 +1,8 @@
 import { getPlayersWithPositions, getSnapshotsWithPlayers } from "@/lib/data";
-import { readLineageByPosition } from "@/lib/applyCorporateActions";
+import { readActionLogOrReport } from "@/lib/applyCorporateActions";
+import { historicalAssetIds, lastKnownPriceFor, type SnapshotHistory } from "@/lib/corporateActions";
+import { readQuoteCache, writeQuoteCache } from "@/lib/quoteCache";
+import { mvpRevealed } from "@/lib/mvpReveal";
 import { fetchOptions, sourceKey, type PriceAsset } from "@/lib/prices";
 import { getRace } from "@/lib/race";
 import { positionValue } from "@/lib/valuation";
@@ -34,7 +37,16 @@ export function resampleOnGrid(points: SeriesPoint[], grid: number[]): number[] 
 
 export type IntradayPlayer = {
   id: number;
-  positions: { assetKey: string; quantity: number; allocation: number; isMvp: boolean }[];
+  positions: {
+    assetKey: string;
+    quantity: number;
+    allocation: number;
+    isMvp: boolean;
+    /** This position's own last known price in current share units. Used when the quote series is missing. */
+    fallbackPrice?: number;
+    /** Unix ms the latest corporate action took effect. Earlier points hold `fallbackPrice`. */
+    effectiveAtMs?: number;
+  }[];
 };
 
 export function buildIntradayHistory(
@@ -47,8 +59,13 @@ export function buildIntradayHistory(
     for (const player of players) {
       row[String(player.id)] = player.positions.reduce((sum, position) => {
         const prices = pricesByAsset.get(position.assetKey);
-        if (!prices) return sum;
-        return sum + positionValue(position.quantity, prices[index], position.allocation, position.isMvp);
+        // Before a deal took effect the successor's series is not this position's history.
+        const beforeAction = position.effectiveAtMs !== undefined && t < position.effectiveAtMs;
+        const price = prices && !(beforeAction && position.fallbackPrice !== undefined)
+          ? prices[index]
+          : position.fallbackPrice;
+        if (price === undefined) return sum;
+        return sum + positionValue(position.quantity, price, position.allocation, position.isMvp);
       }, 0);
     }
     return row;
@@ -93,14 +110,14 @@ export type IntradayResult = {
 };
 
 const CACHE_TTL_MS = 5 * 60_000;
-const cacheGlobal = globalThis as typeof globalThis & {
-  intradayCache?: Map<IntradayRange, { at: number; result: IntradayResult }>;
-};
 
 export async function getIntradayHistory(range: IntradayRange): Promise<IntradayResult> {
-  const cache = cacheGlobal.intradayCache ??= new Map();
-  const hit = cache.get(range);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.result;
+  // Versioned by the corporate-action revision so a split or deal never meets a cached chart.
+  const log = await readActionLogOrReport("intraday");
+  const revision = log?.revision ?? -1;
+  const cacheKey = `intraday:${range}`;
+  const hit = readQuoteCache<IntradayResult>(cacheKey, revision, CACHE_TTL_MS);
+  if (hit) return hit.value;
 
   const race = await getRace();
   if (race.status !== "running") {
@@ -109,42 +126,28 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
     throw err;
   }
   const playerRows = await getPlayersWithPositions();
-  const [snapshotRows, lineage] = await Promise.all([
-    getSnapshotsWithPlayers().catch(() => []),
-    readLineageByPosition().catch(() => new Map<number, number[]>()),
-  ]);
-  const lastPriceByAsset = new Map<number, number>();
-  for (const row of snapshotRows) {
-    const breakdown = (row.snapshot.breakdown ?? []) as { assetId?: number; price?: number }[];
-    for (const item of breakdown) {
-      if (typeof item.assetId === "number" && typeof item.price === "number" && Number.isFinite(item.price)) {
-        lastPriceByAsset.set(item.assetId, item.price);
-      }
-    }
-  }
+  const snapshotRows = await getSnapshotsWithPlayers().catch(() => []);
+  const history: SnapshotHistory[] = snapshotRows.map((row) => ({
+    playerId: row.snapshot.playerId,
+    capturedAt: row.snapshot.capturedAt,
+    breakdown: (row.snapshot.breakdown ?? []) as SnapshotHistory["breakdown"],
+  }));
   const grid = buildGrid(Date.now(), range);
 
   // One fetch per unique asset plus one per foreign quote currency (FX pair).
-  // A dead ticker holds the last snapshot price, not the race-start price.
-  const assetByKey = new Map<string, { asset: PriceAsset; fallbackPrice: number }>();
+  // Fallbacks are per position: a converted pick's restated price must not
+  // leak onto another player's acquirer shares that share the quote key.
+  const assetByKey = new Map<string, PriceAsset>();
   for (const player of playerRows) {
     for (const position of player.positions) {
       const key = sourceKey(position.asset as PriceAsset);
-      if (assetByKey.has(key)) continue;
-      const previousIds = [...(lineage.get(position.id) ?? [])].reverse();
-      const known = [position.assetId, ...previousIds]
-        .map((assetId) => lastPriceByAsset.get(assetId))
-        .find((price) => price !== undefined);
-      assetByKey.set(key, {
-        asset: position.asset as PriceAsset,
-        fallbackPrice: known ?? position.startPrice ?? 0,
-      });
+      if (!assetByKey.has(key)) assetByKey.set(key, position.asset as PriceAsset);
     }
   }
   const fxCurrencies = [...new Set(
     [...assetByKey.values()]
-      .filter(({ asset }) => asset.priceSource !== "none" && asset.priceSource !== "coingecko")
-      .map(({ asset }) => asset.quoteCurrency)
+      .filter((asset) => asset.priceSource !== "none" && asset.priceSource !== "coingecko")
+      .map((asset) => asset.quoteCurrency)
       .filter((currency) => currency !== race.currency)
   )];
 
@@ -161,7 +164,7 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
   }));
 
   const pricesByAsset = new Map<string, number[]>();
-  await Promise.all([...assetByKey].map(async ([key, { asset, fallbackPrice }]) => {
+  await Promise.all([...assetByKey].map(async ([key, asset]) => {
     try {
       if (asset.priceSource === "none") {
         pricesByAsset.set(key, grid.map(() => 1));
@@ -181,21 +184,36 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
       if (!fx) throw new Error(`no FX series for ${asset.quoteCurrency}`);
       pricesByAsset.set(key, raw.map((price, index) => price / fx[index]));
     } catch {
-      // Hold the asset flat at the last known race-currency price rather than dropping it.
-      // `degraded` tells the chart this is not a live print.
+      // No series: each position holds flat at its own last known race-currency price
+      // rather than dropping out. `degraded` tells the chart this is not a live print.
       degraded = true;
-      pricesByAsset.set(key, grid.map(() => fallbackPrice));
     }
   }));
 
+  // Public chart: before the MVP reveal, totals are at market so the leverage cannot expose a pick.
+  const revealed = mvpRevealed(playerRows.length, playerRows.flatMap((player) => player.positions));
   const players: IntradayPlayer[] = playerRows.map((player) => ({
     id: player.id,
-    positions: player.positions.map((position) => ({
-      assetKey: sourceKey(position.asset as PriceAsset),
-      quantity: position.quantity ?? 0,
-      allocation: position.allocation,
-      isMvp: position.isMvp,
-    })),
+    positions: player.positions.map((position) => {
+      const key = String(position.id);
+      const quantity = position.quantity ?? 0;
+      const known = lastKnownPriceFor(history, {
+        playerId: player.id,
+        positionId: position.id,
+        assetIds: historicalAssetIds(position.assetId, log?.lineageByPosition[key]),
+        quantity,
+        effectiveAt: log?.effectiveAtByPosition[key],
+      });
+      const effectiveAt = log?.effectiveAtByPosition[key];
+      return {
+        assetKey: sourceKey(position.asset as PriceAsset),
+        quantity,
+        allocation: position.allocation,
+        isMvp: revealed && position.isMvp,
+        fallbackPrice: position.asset.priceSource === "none" ? 1 : known ?? position.startPrice ?? 0,
+        ...(effectiveAt === undefined ? {} : { effectiveAtMs: effectiveAt * 1000 }),
+      };
+    }),
   }));
 
   const result: IntradayResult = {
@@ -204,6 +222,7 @@ export async function getIntradayHistory(range: IntradayRange): Promise<Intraday
     degraded,
     history: buildIntradayHistory(players, pricesByAsset, grid),
   };
-  cache.set(range, { at: Date.now(), result });
+  // The reveal is not part of the cache key, so only cache once it has happened.
+  if (revealed) writeQuoteCache(cacheKey, revision, result);
   return result;
 }

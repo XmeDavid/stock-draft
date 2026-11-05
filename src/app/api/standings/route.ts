@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { isAdminRequest, mvpRevealed } from "@/lib/mvpReveal";
 import { getPlayersWithPositions, getSnapshotsWithPlayers } from "@/lib/data";
 import { getRace } from "@/lib/race";
 import { advanceRaceClock } from "@/lib/raceClock";
@@ -9,19 +10,21 @@ import {
   findBreakdownRow,
   historicalAssetIds,
   lastKnownPriceFor,
+  mappingHint,
   resolvePositionQuote,
-  tickerKey,
   unpricedHint,
   valuePosition,
   type PriceBasis,
+  type SnapshotHistory,
 } from "@/lib/corporateActions";
 import { mergerMappings } from "@/lib/mergerMap";
 import {
   applyConfiguredMappings,
   applySplitsFromQuotes,
-  readLineageByPosition,
+  readActionLogOrReport,
   recoverPunctuation,
 } from "@/lib/applyCorporateActions";
+import { readQuoteCache, writeQuoteCache } from "@/lib/quoteCache";
 import { withPortfolioBaseline, withReturnBaseline } from "@/lib/profileHistory";
 import {
   buildWeeklyMatchups,
@@ -33,14 +36,18 @@ import {
 
 export const dynamic = "force-dynamic";
 
-let cache: { at: number; prices: Map<string, PriceResult> } | null = null;
+const PRICE_CACHE_KEY = "standings:prices";
+const PRICE_CACHE_TTL_MS = 5 * 60_000;
 
 type BreakdownRow = {
+  positionId?: number;
   assetId: number;
   price: number;
   value: number;
+  quantity?: number;
   allocation?: number;
   isMvp?: boolean;
+  pricingStatus?: "live" | "unpriced";
   possibleCorporateAction?: boolean;
 };
 
@@ -74,7 +81,25 @@ function standardDeviation(values: number[]): number {
   return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length);
 }
 
-export async function GET(req: Request) {
+function marketValue(row: BreakdownRow): number {
+  return typeof row.quantity === "number" ? row.quantity * row.price : row.value;
+}
+
+/**
+ * Before the MVP reveal a snapshot's total and per-position values carry the
+ * MVP leverage, which would expose the pick. Restate them at market value.
+ */
+function withoutMvp<T extends { totalValue: number; breakdown: unknown }>(snapshot: T): T {
+  const breakdown = ((snapshot.breakdown ?? []) as BreakdownRow[]).map((item) => {
+    const { isMvp, ...row } = item;
+    void isMvp;
+    return { ...row, value: marketValue(item) };
+  });
+  return { ...snapshot, totalValue: breakdown.reduce((sum, row) => sum + row.value, 0), breakdown };
+}
+
+export async function GET(req: NextRequest) {
+  const isAdmin = isAdminRequest(req);
   await advanceRaceClock();
   const race = await getRace();
   if (race.status === "running") {
@@ -89,39 +114,53 @@ export async function GET(req: Request) {
     getSnapshotsWithPlayers(),
   ]);
   let players = loadedPlayers;
-  const lineage = await readLineageByPosition().catch(() => new Map<number, number[]>());
-  const snapshots = snapshotRows.map(({ snapshot, player }) => ({ ...snapshot, player }));
+  let actionLog = await readActionLogOrReport("standings");
+  let snapshots = snapshotRows.map(({ snapshot, player }) => ({ ...snapshot, player }));
+  const snapshotHistory: SnapshotHistory[] = snapshots.map((snapshot) => ({
+    playerId: snapshot.playerId,
+    capturedAt: snapshot.capturedAt,
+    breakdown: (snapshot.breakdown ?? []) as SnapshotHistory["breakdown"],
+  }));
 
   let prices = new Map<string, PriceResult>();
   let pricesAsOf: Date | null = null;
   if (race.status === "running") {
     const forceRefresh = new URL(req.url).searchParams.get("refresh") === "1";
-    const cacheHit = !forceRefresh && cache && Date.now() - cache.at < 5 * 60_000;
-    if (cacheHit && cache) {
-      prices = cache.prices;
+    // The cache is keyed by the action revision: quotes cached before a split or deal are never reused after it.
+    const cached = forceRefresh
+      ? null
+      : readQuoteCache<Map<string, PriceResult>>(PRICE_CACHE_KEY, actionLog?.revision ?? -1, PRICE_CACHE_TTL_MS);
+    if (cached) {
+      prices = cached.value;
+      pricesAsOf = new Date(cached.at);
     } else {
       const assets = players.flatMap((player) => player.positions.map((position) => position.asset as PriceAsset));
       prices = await getPrices(assets, race.currency);
-      cache = { at: Date.now(), prices };
       // Only the request that talked to Yahoo may write a split or a punctuation rename.
       // Cached reads must not open a transaction or probe delisted tickers on every view.
       try {
-        if (await applySplitsFromQuotes(prices)) {
-          players = await getPlayersWithPositions();
-        }
-        if (await recoverPunctuation(failedYahooAssets(players, prices))) {
-          players = await getPlayersWithPositions();
-          const refreshed = players.flatMap((player) => player.positions.map((position) => position.asset as PriceAsset));
+        await applySplitsFromQuotes(prices);
+        if (await recoverPunctuation(failedYahooAssets(await getPlayersWithPositions(), prices))) {
+          const renamed = await getPlayersWithPositions();
+          const refreshed = renamed.flatMap((player) => player.positions.map((position) => position.asset as PriceAsset));
           prices = await getPrices(refreshed, race.currency);
-          cache = { at: Date.now(), prices };
-          if (await applySplitsFromQuotes(prices)) players = await getPlayersWithPositions();
+          await applySplitsFromQuotes(prices);
         }
       } catch (error) {
         console.error("corporate action quote reconcile failed", error);
       }
+      // Always reload: this request or a concurrent one may have changed quantities
+      // while the quotes were in flight.
+      players = await getPlayersWithPositions();
+      actionLog = await readActionLogOrReport("standings");
+      pricesAsOf = new Date(writeQuoteCache(PRICE_CACHE_KEY, actionLog?.revision ?? -1, prices));
     }
-    pricesAsOf = cache ? new Date(cache.at) : null;
   }
+
+  // Same reveal rule as /api/draft. Until then the public response carries no
+  // MVP flag and no leveraged value from which the pick could be inferred.
+  const showMvp = isAdmin || mvpRevealed(players.length, players.flatMap((player) => player.positions));
+  if (!showMvp) snapshots = snapshots.map(withoutMvp);
 
   const latestSnapshotByPlayer = new Map<number, (typeof snapshots)[number]>();
   for (const snapshot of snapshots) latestSnapshotByPlayer.set(snapshot.playerId, snapshot);
@@ -135,7 +174,8 @@ export async function GET(req: Request) {
       (a, b) => (a.pickIndex ?? Number.MAX_SAFE_INTEGER) - (b.pickIndex ?? Number.MAX_SAFE_INTEGER)
     );
     const positions = orderedPositions.map((position) => {
-        const assetIds = historicalAssetIds(position.assetId, lineage.get(position.id));
+        const key = String(position.id);
+        const assetIds = historicalAssetIds(position.assetId, actionLog?.lineageByPosition[key]);
         const live = prices.get(sourceKey(position.asset as PriceAsset));
         const final = findBreakdownRow(finalBreakdown, assetIds);
         const startPrice = Number(position.startPrice ?? 0);
@@ -148,44 +188,44 @@ export async function GET(req: Request) {
         if (race.status === "running") {
           const quote = resolvePositionQuote({
             live,
-            lastSnapshotPrice: lastKnownPriceFor(
-              snapshots.map((snapshot) => ({
-                playerId: snapshot.playerId,
-                breakdown: (snapshot.breakdown ?? []) as { assetId: number; price: number }[],
-              })),
-              player.id,
+            lastSnapshotPrice: lastKnownPriceFor(snapshotHistory, {
+              playerId: player.id,
+              positionId: position.id,
               assetIds,
-            ),
+              quantity: Number(position.quantity ?? 0),
+              effectiveAt: actionLog?.effectiveAtByPosition[key],
+            }),
             startPrice,
             priceSource: position.asset.priceSource,
+            corporateActionSignal: mappingHint(position.asset.symbol, mergerMappings) !== null,
           });
           currentPrice = quote.price;
           pricingStatus = quote.pricingStatus;
           possibleCorporateAction = quote.possibleCorporateAction;
           priceBasis = quote.priceBasis;
           previousClose = quote.previousClose;
-          if (possibleCorporateAction) stale = true;
-          const quotedSymbol = live && "quotedSymbol" in live ? live.quotedSymbol : undefined;
-          hint = possibleCorporateAction
-            ? unpricedHint(position.asset.symbol, mergerMappings, quotedSymbol)
-            : quotedSymbol && tickerKey(quotedSymbol) !== tickerKey(position.asset.symbol)
-              ? `Yahoo identifies this quote as ${quotedSymbol}.`
-              : null;
+          if (pricingStatus === "unpriced") {
+            stale = true;
+            // Successful quotes always match the ticker; a redirect arrives as a failure carrying the other symbol.
+            const quotedSymbol = live && "error" in live ? live.quotedSymbol : undefined;
+            hint = unpricedHint(position.asset.symbol, mergerMappings, quotedSymbol, possibleCorporateAction);
+          }
         } else if (race.status === "finished" && final) {
           currentPrice = final.price;
           possibleCorporateAction = Boolean(final.possibleCorporateAction);
-          pricingStatus = possibleCorporateAction ? "unpriced" : "live";
-          priceBasis = possibleCorporateAction ? "last-snapshot" : "live";
-          if (possibleCorporateAction) {
+          pricingStatus = final.pricingStatus ?? (possibleCorporateAction ? "unpriced" : "live");
+          priceBasis = pricingStatus === "unpriced" ? "last-snapshot" : "live";
+          if (pricingStatus === "unpriced") {
             stale = true;
-            hint = unpricedHint(position.asset.symbol, mergerMappings);
+            hint = unpricedHint(position.asset.symbol, mergerMappings, undefined, possibleCorporateAction);
           }
         }
 
         const quantity = Number(position.quantity ?? 0);
         const allocation = Number(position.allocation);
+        const isMvp = showMvp && position.isMvp;
         const valued = valuePosition(
-          { quantity, allocation, isMvp: position.isMvp, startPrice, type: position.asset.type },
+          { quantity, allocation, isMvp, startPrice, type: position.asset.type },
           { price: currentPrice, previousClose, pricingStatus, possibleCorporateAction, priceBasis },
         );
         return {
@@ -203,7 +243,7 @@ export async function GET(req: Request) {
           todayGainPct: valued.todayGainPct,
           marketGainPct: valued.marketGainPct,
           gainPct: valued.gainPct,
-          isMvp: position.isMvp,
+          ...(showMvp ? { isMvp } : {}),
           pricingStatus,
           possibleCorporateAction,
           priceBasis,
@@ -269,7 +309,7 @@ export async function GET(req: Request) {
         for (const position of player.positions) {
           const point = findBreakdownRow(
             breakdown,
-            historicalAssetIds(position.assetId, lineage.get(position.positionId)),
+            historicalAssetIds(position.assetId, actionLog?.lineageByPosition[String(position.positionId)]),
           );
           row[position.symbol] = point && position.allocation > 0
             ? percentGain(point.value, position.allocation)

@@ -2,16 +2,20 @@ import { getPlayersWithPositions, getSnapshotsWithPlayers } from "@/lib/data";
 import { getRace } from "@/lib/race";
 import { percentGain } from "@/lib/valuation";
 import { buildWorkbook } from "@/lib/export";
+import { isAdminRequest, mvpRevealed } from "@/lib/mvpReveal";
+import type { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const race = await getRace();
   const [players, snapshotRows] = await Promise.all([
     getPlayersWithPositions(),
     getSnapshotsWithPlayers(),
   ]);
   const capital = Number(race.startingCapital);
+  // Public download: same reveal rule as /api/draft and the standings.
+  const showMvp = isAdminRequest(req) || mvpRevealed(players.length, players.flatMap((p) => p.positions));
 
   const latestByPlayer = new Map<number, number>();
   for (const { snapshot } of snapshotRows) latestByPlayer.set(snapshot.playerId, snapshot.totalValue);
@@ -32,7 +36,7 @@ export async function GET() {
     positions: players.flatMap((p) => p.positions.map((pos) => ({
       playerName: p.name, symbol: pos.asset.symbol, assetName: pos.asset.name,
       allocation: Number(pos.allocation), quantity: Number(pos.quantity ?? 0), startPrice: Number(pos.startPrice ?? 0),
-      isMvp: pos.isMvp,
+      isMvp: showMvp && pos.isMvp,
     }))),
   });
 
